@@ -59,7 +59,7 @@ impl ProbeBuilder for KprobeBuilder {
         self.links.push(
             obj.prog_mut("probe_kprobe")
                 .ok_or_else(|| anyhow!("Couldn't get program"))?
-                .attach_kprobe(false, symbol.func_name())?,
+                .attach_kprobe(false, symbol.attach_name())?,
         );
         Ok(())
     }

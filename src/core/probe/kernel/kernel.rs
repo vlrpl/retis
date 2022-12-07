@@ -134,7 +134,7 @@ impl Kernel {
     ///     ProbeType::RawTracepoint, Symbol::from_name("kfree_skb").unwrap()).unwrap();
     /// ```
     pub(crate) fn add_probe_to_symbol(&mut self, r#type: ProbeType, symbol: Symbol) -> Result<()> {
-        let key = symbol.func_name();
+        let key = symbol.name();
 
         // First check if it is already in the generic probe list.
         let set = &mut self.probes[r#type as usize];
@@ -230,7 +230,7 @@ impl Kernel {
         r#type: ProbeType,
         symbol: Symbol,
     ) -> Result<()> {
-        let key = symbol.func_name();
+        let key = symbol.name();
 
         // First check if the target isn't already registered to the generic
         // probes list. If so, remove it from there.

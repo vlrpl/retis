@@ -83,10 +83,7 @@ impl BpfEvents {
                 let symbol = u64::from_ne_bytes(raw_section.data[0..8].try_into()?);
                 let timestamp = u64::from_ne_bytes(raw_section.data[8..16].try_into()?);
 
-                fields.push(event_field!(
-                    "symbol",
-                    Symbol::from_addr(symbol)?.func_name()
-                ));
+                fields.push(event_field!("symbol", Symbol::from_addr(symbol)?.name()));
                 fields.push(event_field!("timestamp", timestamp));
                 Ok(())
             }),

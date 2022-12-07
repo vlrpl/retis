@@ -105,12 +105,21 @@ impl Symbol {
         Self::from_addr(addr)
     }
 
-    /// Get the symbol function name.
+    /// Get the symbol name.
+    ///
+    /// E.g. for `kfree_skb`. If the Probe represents the:
+    /// - event: `skb:kfree_skb`.
+    /// - function: `kfree_skb`.
+    pub(crate) fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    /// Get the symbol attach name, used as a target for probing it.
     ///
     /// E.g. for `kfree_skb`. If the Probe represents the:
     /// - event: `kfree_skb`.
     /// - function: `kfree_skb`.
-    pub(crate) fn func_name(&self) -> String {
+    pub(crate) fn attach_name(&self) -> String {
         match self.r#type {
             SymbolType::Func => self.name.clone(),
             SymbolType::Event => {
@@ -131,7 +140,7 @@ impl Symbol {
         match self.r#type {
             SymbolType::Func => self.name.clone(),
             SymbolType::Event => {
-                format!("__tracepoint_{}", self.func_name())
+                format!("__tracepoint_{}", self.attach_name())
             }
         }
     }
@@ -147,7 +156,7 @@ impl Symbol {
             // Events need to access a symbol derived from TP_PROTO(), named
             // "btf_trace_<func>".
             SymbolType::Event => {
-                format!("btf_trace_{}", self.func_name())
+                format!("btf_trace_{}", self.attach_name())
             }
         }
     }
@@ -187,16 +196,14 @@ impl Symbol {
     }
 }
 
-/// Only allow to access the symbol name using the Display trait as this should
-/// be used for reporting things about the symbol (events, logs, etc) but not
-/// directly used in other APIs.
+/// Allow nice formatting when using a symbol in a log message.
 ///
 /// E.g. for `kfree_skb`. If the Probe represents the:
 /// - event: `skb:kfree_skb`.
 /// - function: `kfree_skb`.
 impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "{}", self.name())
     }
 }
 
@@ -214,7 +221,7 @@ mod tests {
     fn from_name() {
         // First test an event.
         let symbol = Symbol::from_name("skb:kfree_skb").unwrap();
-        assert!(symbol.func_name() == "kfree_skb");
+        assert!(symbol.attach_name() == "kfree_skb");
         assert!(symbol.addr_name() == "__tracepoint_kfree_skb");
         assert!(symbol.typedef_name() == "btf_trace_kfree_skb");
         assert!(symbol.nargs().unwrap() == 3);
@@ -224,7 +231,7 @@ mod tests {
 
         // Then a function.
         let symbol = Symbol::from_name("kfree_skb_reason").unwrap();
-        assert!(symbol.func_name() == "kfree_skb_reason");
+        assert!(symbol.attach_name() == "kfree_skb_reason");
         assert!(symbol.addr_name() == "kfree_skb_reason");
         assert!(symbol.typedef_name() == "kfree_skb_reason");
         assert!(symbol.nargs().unwrap() == 2);
@@ -237,7 +244,7 @@ mod tests {
     fn from_addr() {
         // From an address (is an event).
         let symbol = Symbol::from_addr(0xffffffff983c29a0).unwrap();
-        assert!(symbol.func_name() == "kfree_skb");
+        assert!(symbol.attach_name() == "kfree_skb");
         assert!(symbol.addr_name() == "__tracepoint_kfree_skb");
         assert!(symbol.typedef_name() == "btf_trace_kfree_skb");
         assert!(symbol.nargs().unwrap() == 3);
@@ -247,7 +254,7 @@ mod tests {
 
         // From an address (is a function).
         let symbol = Symbol::from_addr(0xffffffff95612980).unwrap();
-        assert!(symbol.func_name() == "kfree_skb_reason");
+        assert!(symbol.attach_name() == "kfree_skb_reason");
         assert!(symbol.addr_name() == "kfree_skb_reason");
         assert!(symbol.typedef_name() == "kfree_skb_reason");
         assert!(symbol.nargs().unwrap() == 2);
@@ -264,7 +271,7 @@ mod tests {
     fn from_addr_near() {
         // From an address (is an event).
         let symbol = Symbol::from_addr_near(0xffffffff983c29a0 + 1).unwrap();
-        assert!(symbol.func_name() == "kfree_skb");
+        assert!(symbol.attach_name() == "kfree_skb");
         assert!(symbol.addr_name() == "__tracepoint_kfree_skb");
         assert!(symbol.typedef_name() == "btf_trace_kfree_skb");
         assert!(symbol.nargs().unwrap() == 3);
@@ -274,7 +281,7 @@ mod tests {
 
         // From an address (is a function).
         let symbol = Symbol::from_addr_near(0xffffffff95612980 + 1).unwrap();
-        assert!(symbol.func_name() == "kfree_skb_reason");
+        assert!(symbol.attach_name() == "kfree_skb_reason");
         assert!(symbol.addr_name() == "kfree_skb_reason");
         assert!(symbol.typedef_name() == "kfree_skb_reason");
         assert!(symbol.nargs().unwrap() == 2);

@@ -54,7 +54,7 @@ impl ProbeBuilder for RawTracepointBuilder {
         self.links.append(&mut links);
 
         self.links
-            .push(prog.attach_raw_tracepoint(symbol.func_name())?);
+            .push(prog.attach_raw_tracepoint(symbol.attach_name())?);
         Ok(())
     }
 }
