@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Result};
+use log::info;
 
 use super::{cli::Collect, group::Group};
 use crate::{
@@ -136,7 +137,10 @@ fn parse_probe(probe: &str) -> Result<(ProbeType, &str)> {
             };
             Ok((r#type, target))
         }
-        None => bail!("No TYPE given. See the help."),
+        None => {
+            info!("No TYPE given for {}, using kprobe:{}", probe, probe);
+            Ok((ProbeType::Kprobe, probe))
+        }
     }
 }
 
