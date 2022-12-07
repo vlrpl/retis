@@ -84,20 +84,17 @@ impl Symbol {
             Some(strip) => {
                 match inspect::find_matching_event(strip)? {
                     Some(event) => event,
-                    // Not much we can do, let's try to see if we can find the
-                    // function itself, but it might not be traceable.
-                    None => strip.to_string(),
+                    None => {
+                        // Not much we can do, we know it's a valid one. Let's
+                        // still return an object.
+                        return Ok(Symbol::new(SymbolType::Event, &format!("unknow:{}", strip)));
+                    }
                 }
             }
             None => target.to_string(),
         };
 
-        Ok(match Self::from_name(&name) {
-            Ok(symbol) => symbol,
-            // We still weren't able to find the symbol, but we know it's a
-            // valid one. Let's still return an object, which might be limited.
-            Err(_) => Symbol::new(SymbolType::Func, &name),
-        })
+        Self::from_name(&name)
     }
 
     /// Create a new symbol given an address near a symbol one. This is useful
