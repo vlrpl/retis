@@ -21,5 +21,6 @@ serde_json = "1.0"
 simplelog = "0.12"
 
 [build-dependencies]
+bindgen = "0.63"
 libbpf-cargo = "0.13"
 memmap2 = "0.5"
