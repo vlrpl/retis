@@ -2,6 +2,7 @@ use std::{
     env,
     fs::{create_dir_all, File},
     io::Write,
+    process::Command,
 };
 
 use libbpf_cargo::SkeletonBuilder;
@@ -101,18 +102,32 @@ fn gen_bindings() {
         .expect("Failed writing bindings");
 }
 
-fn build_stub() {
+fn build_extract_stub() {
     const FILTER_STUB: &str = "src/core/filters/packets/bpf/stub.bpf.c";
     let (_, name) = get_paths(FILTER_STUB);
+    let stub_base = format!("{}/{}", env::var("OUT_DIR").unwrap(), name);
+    let stub_out = format!("{}.o", stub_base);
 
     if let Err(e) = SkeletonBuilder::new()
         .source(FILTER_STUB)
-        .obj(format!("{}/{}.o", env::var("OUT_DIR").unwrap(), name))
+        .obj(&stub_out)
         .clang_args(format!("-I{} ", FILTER_INCLUDE_PATH))
         .build()
     {
         panic!("{}", e);
     }
+
+    Command::new("llvm-objcopy")
+        .args(["-O binary", "--set-section-flags .BTF=alloc", "-j .BTF", stub_out.as_str()])
+        .arg(format!("{}.BTF", stub_base))
+        .output()
+        .expect("Failed to extract .BTF from stub ELF");
+
+    Command::new("llvm-objcopy")
+        .args(["-O binary", "--set-section-flags .BTF.ext=alloc", "-j .BTF.ext", stub_out.as_str()])
+        .arg(format!("{}.BTF.ext", stub_base))
+        .output()
+        .expect("Failed to extract .BTF.ext from stub ELF");
 
     println!("cargo:rerun-if-changed={}", FILTER_STUB);
 }
@@ -127,7 +142,7 @@ fn main() {
     // module::skb_tracking
     build_hook("src/module/skb_tracking/bpf/tracking_hook.bpf.c");
 
-    build_stub();
+    build_extract_stub();
 
     for inc in INCLUDE_PATHS.iter() {
         println!("cargo:rerun-if-changed={}", inc);
