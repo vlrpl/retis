@@ -70,7 +70,7 @@ struct MetaTarget {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 struct MetaLoad {
     // Type of data we're going to load
     // bit 0-4: [char|short|int|long], bit5: reserved, bit6: is_ptr, bit7: sign
@@ -735,5 +735,16 @@ mod tests {
         assert!(meta_target.md.iter().all(|&x| x == 0));
 
         Ok(())
+    }
+
+    #[test_case("dev.name:~0x00" => matches Err(_); "string failure")]
+    #[test_case("dev:~0x00.mtu" => matches Ok(l) if l == MetaLoad { r#type: PTR_BIT, nmemb: 0, offt: 16, bf_size: 0, mask: !0x00 }; "pointer")]
+    #[test_case("mark:0xff" => matches Ok(l) if l == MetaLoad { r#type: MetaType::Int as u8, nmemb: 0, offt: 168, bf_size: 0, mask: 0xff }; "u32")]
+    #[test_case("headers.skb_iif:0xbad" => matches Err(_); "signed int failure")]
+    #[test_case("pkt_type:0x2" => matches Ok(l) if l == MetaLoad { r#type: MetaType::Char as u8, nmemb: 0, offt: 1024, bf_size: 3, mask: 0x2 }; "unsigned bitfield")]
+    fn meta_filter_masks(expr: &'static str) -> Result<MetaLoad> {
+        let filter = FilterMeta::from_string(format!("sk_buff.{expr}").to_string())?;
+
+        Ok(filter.0[1].load_ref().clone())
     }
 }
