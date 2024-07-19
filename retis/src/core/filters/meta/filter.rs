@@ -777,4 +777,12 @@ mod tests {
 
         Ok(filter.0[1].load_ref().clone())
     }
+
+    #[test]
+    fn meta_filter_cast() {
+        let filter = FilterMeta::from_string(format!("sk_buff._nfct:~0x0:nf_conn.mark").to_string()).unwrap();
+
+        // _nfct bits_offset=832 (104)
+    }
+    
 }
