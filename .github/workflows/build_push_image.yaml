@@ -49,13 +49,13 @@ jobs:
           image: retis
           tags: ${{ env.RELEASE_TAG }}
 
-      - name: Push container image
-        id: push_image
-        uses: redhat-actions/push-to-registry@v2
-        with:
-          image: ${{ steps.build_image.outputs.image }}
-          tags: ${{ steps.build_image.outputs.tags }}
-          registry: env.IMAGE_REGISTRY
+#      - name: Push container image
+#        id: push_image
+#        uses: redhat-actions/push-to-registry@v2
+#        with:
+#          image: ${{ steps.build_image.outputs.image }}
+#          tags: ${{ steps.build_image.outputs.tags }}
+#          registry: env.IMAGE_REGISTRY
 
       - name: Show outputs
         run: |
