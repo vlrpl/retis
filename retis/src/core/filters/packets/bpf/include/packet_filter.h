@@ -75,7 +75,7 @@ unsigned int packet_filter(struct retis_packet_filter_ctx *ctx, u32 placeholder)
 		  "r4", "r5", "r6", "r7",
 		  "r8", "r9");
 
-	return ctx->ret;
-}
+ return ctx->ret;
+ } 
 
 #endif
