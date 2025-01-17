@@ -1,0 +1,14 @@
+name: eBPF coding style check
+on: [pull_request]
+jobs:
+  review:
+    name: checkpatch run
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: $((${{ github.event.pull_request.commits }} + 1))
+    - name: Run checkpatch
+      uses: webispy/checkpatch-action@v9
