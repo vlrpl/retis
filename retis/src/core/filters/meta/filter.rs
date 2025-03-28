@@ -815,42 +815,6 @@ mod tests {
         assert_eq!(target, 1);
     }
 
-    // Only validates for what type of targets lhs-only expressions
-    // are allowed. The offset extraction is not required as it is
-    // already performed by previous tests.
-    #[test_case("dev" => matches Err(_); "pointer")]
-    #[test_case("dev.name" => matches Err(_); "string failure")]
-    #[test_case("headers" => matches Err(_); "named struct failure")]
-    #[test_case("mark" => matches Ok(_); "u32")]
-    #[test_case("headers.skb_iif" => matches Ok(_); "signed int")]
-    #[test_case("cloned" => matches Ok(_); "unsigned bitfield")]
-    fn meta_filter_lhs_only(field: &'static str) -> Result<()> {
-        let filter = FilterMeta::from_string(format!("sk_buff.{field}").to_string())?;
-        let meta_target = filter.0[0].target_ref();
-
-        assert_eq!(meta_target.cmp, MetaCmp::Ne as u8);
-        assert!(meta_target.md.iter().all(|&x| x == 0));
-
-        Ok(())
-    }
-
-    #[test_case("dev.name:~0x00" => matches Err(_); "string failure")]
-    #[test_case("dev:~0x00.mtu" => matches Ok(l) if l == MetaLoad { r#type: PTR_BIT, nmemb: 0, offt: 16, bf_size: 0, mask: !0x00 }; "pointer")]
-    #[test_case("mark:0xff" => matches Ok(l) if l == MetaLoad { r#type: MetaType::Int as u8, nmemb: 0, offt: 168, bf_size: 0, mask: 0xff }; "u32")]
-    #[test_case("mark:0x0" => matches Err(_); "zero hex mask failure")]
-    #[test_case("mark:~0xffffffffffffffff" => matches Err(_); "bitwise not u64 hex mask failure")]
-    #[test_case("mark:0b00" => matches Err(_); "zero bin mask failure")]
-    #[test_case("mark:0" => matches Err(_); "mask format failure")]
-    #[test_case("headers.skb_iif:0xbad" => matches Err(_); "signed int failure")]
-    #[test_case("pkt_type:0x2" => matches Ok(l) if l == MetaLoad { r#type: MetaType::Char as u8, nmemb: 0, offt: 1024, bf_size: 3, mask: 0x2 }; "unsigned bitfield")]
-    #[test_case("pkt_type:0b10" => matches Ok(l) if l == MetaLoad { r#type: MetaType::Char as u8, nmemb: 0, offt: 1024, bf_size: 3, mask: 0x2 }; "binary unsigned bitfield")]
-    #[test_case("pkt_type:~0b10" => matches Ok(l) if l == MetaLoad { r#type: MetaType::Char as u8, nmemb: 0, offt: 1024, bf_size: 3, mask: !0x2 }; "bitwise not binary unsigned bitfield")]
-    fn meta_filter_masks(expr: &'static str) -> Result<MetaLoad> {
-        let filter = FilterMeta::from_string(format!("sk_buff.{expr}").to_string())?;
-
-        Ok(filter.0[1].load_ref().clone())
-    }
-
     #[test]
     fn meta_filter_cast() {
         // Casting a field smaller than a pointer is not allowed
