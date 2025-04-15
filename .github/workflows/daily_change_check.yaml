@@ -21,3 +21,38 @@ jobs:
           gh workflow run build_push_image.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  stale-check:
+    runs-on: ubuntu-latest
+    env:
+      AUTO_STALE_THRESHOLD: 200
+      AUTO_CLOSE_THRESHOLD: 60
+      AUTO_STALE_MSG: |
+        This item has been automatically marked as stale due to ${{ env.AUTO_STALE_THRESHOLD }} days of inactivity.
+        If this remains inactive for an additional ${{ env.AUTO_CLOSE_THRESHOLD }} days, it will be automatically closed.
+        In case this was incorrectly marked as stale, please, remove the `stale` label, and do one or more of the following:
+          - Add it to a milestone, if applicable
+          - Label it as `NoStale`
+          - Leave a comment requesting a review
+
+          If you do not have sufficient permissions to complete any of the previous steps, feel free to reach out to the maintainers.
+          AUTO_CLOSE_MSG: |
+            The item has been automatically closed for inactivity.
+            If this was not intended, please, reopen the item and follow the instructions included in the stale warning.
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # Do not consider issues/PRs with a milestone set.
+          exempt-all-milestones: true
+          # When 'NoStale' is set, PRs and issues are exempted from going stale.
+          # 'Stale' is the default label of PRs reaching the stale state.
+          exempt-pr-labels: 'NoStale'
+          exempt-issue-labels: 'NoStale'
+          # Override the default stale/close (60d/7d) inactivity timeouts
+          days-before-stale: ${{ env.AUTO_STALE_THRESHOLD }}
+          days-before-close: ${{ env.AUTO_CLOSE_THRESHOLD }}
+          stale-pr-message: ${{ env.AUTO_STALE_MSG }}
+          stale-issue-message: ${{ env.AUTO_STALE_MSG }}
+          close-pr-message: ${{ env.AUTO_CLOSE_MSG }}
+          close-issue-message: ${{ env.AUTO_CLOSE_MSG }}
