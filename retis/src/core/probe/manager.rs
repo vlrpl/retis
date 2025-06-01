@@ -2,7 +2,7 @@
 #![cfg_attr(test, allow(unused_imports))]
 use std::{
     cmp,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     os::fd::{AsFd, AsRawFd, RawFd},
 };
 
@@ -101,42 +101,17 @@ impl ProbeManager {
             _ => bail!("Probe manager is already at runtime state"),
         };
 
-        // Prepare all hooks:
-        // - Reuse global maps.
-        // - Set global options.
+        // Prepare hooks.
         builder
             .generic_hooks
             .iter_mut()
             .for_each(|h| h.maps.extend(builder.maps.clone()));
-        builder.probes.values_mut().try_for_each(|p| {
-            builder
-                .maps
-                .iter()
-                .try_for_each(|(name, fd)| p.reuse_map(name, *fd))?;
-            builder
-                .global_probes_options
-                .iter()
-                .try_for_each(|o| p.set_option(o.clone()))
-        })?;
 
         // Set up filters and their handlers.
         for filter in builder.filters.iter() {
             match filter {
-                Filter::Packet(magic, _) => {
+                Filter::Packet(magic, _) | Filter::Meta(magic, _) => {
                     filters::register_filter(*magic, filter)?;
-                }
-                #[allow(unused_variables)]
-                Filter::Meta(ops) =>
-                {
-                    #[cfg(not(test))]
-                    for (p, op) in ops.0.iter().enumerate() {
-                        let pos = u32::try_from(p)?.to_ne_bytes();
-                        builder.meta_map.update(
-                            &pos,
-                            unsafe { plain::as_bytes(op) },
-                            libbpf_rs::MapFlags::ANY,
-                        )?;
-                    }
                 }
             }
         }
@@ -168,7 +143,8 @@ impl ProbeManager {
             hooks: builder.generic_hooks.into_iter().collect(),
             generic_builders: HashMap::new(),
             targeted_builders: Vec::new(),
-            probes: HashSet::new(),
+            probes: HashMap::new(),
+            global_probes_options: builder.global_probes_options.into_iter().collect(),
             filters: builder.filters,
         };
 
@@ -219,9 +195,6 @@ pub(crate) struct ProbeBuilderManager {
     /// Dynamic probes requires a map that provides extra information at runtime. This is that map.
     #[cfg(not(test))]
     config_map: libbpf_rs::MapHandle,
-    /// Global map used to pass meta filter actions.
-    #[cfg(not(test))]
-    meta_map: libbpf_rs::MapHandle,
     /// Global per-probe map used to report counters.
     #[cfg(not(test))]
     counters_map: libbpf_rs::MapHandle,
@@ -243,8 +216,6 @@ impl ProbeBuilderManager {
             #[cfg(not(test))]
             config_map: init_config_map()?,
             #[cfg(not(test))]
-            meta_map: filters::meta::filter::init_meta_map()?,
-            #[cfg(not(test))]
             counters_map: init_counters_map()?,
         };
 
@@ -257,12 +228,6 @@ impl ProbeBuilderManager {
         #[cfg(not(test))]
         mgr.maps
             .insert("config_map".to_string(), mgr.config_map.as_fd().as_raw_fd());
-
-        #[cfg(not(test))]
-        mgr.maps.insert(
-            "filter_meta_map".to_string(),
-            mgr.meta_map.as_fd().as_raw_fd(),
-        );
 
         #[cfg(not(test))]
         mgr.maps.insert(
@@ -411,7 +376,8 @@ pub(crate) struct ProbeRuntimeManager {
     targeted_builders: Vec<Box<dyn ProbeBuilder>>,
     map_fds: Vec<(String, RawFd)>,
     hooks: Vec<Hook>,
-    probes: HashSet<String>,
+    probes: HashMap<String, Vec<ProbeOption>>,
+    global_probes_options: Vec<ProbeOption>,
     filters: Vec<Filter>,
 }
 
@@ -489,7 +455,6 @@ impl ProbeRuntimeManager {
                 } else {
                     Vec::new()
                 },
-                self.filters.clone(),
                 None,
             )?;
 
@@ -501,10 +466,25 @@ impl ProbeRuntimeManager {
         Ok(())
     }
 
+    /// Make the probe inherit the global options.
+    fn prepare_probe(&mut self, probe: &mut Probe) -> Result<()> {
+        self.map_fds
+            .iter()
+            .try_for_each(|(name, fd)| probe.reuse_map(name, *fd))?;
+        self.global_probes_options
+            .iter()
+            .try_for_each(|o| probe.set_option(o.clone()))
+    }
+
     /// Attach a new targeted probe.
     #[cfg(not(test))]
     fn attach_targeted_probe(&mut self, probe: &mut Probe) -> Result<()> {
-        if !self.probes.insert(probe.key()) {
+        self.prepare_probe(probe)?;
+        if self
+            .probes
+            .insert(probe.key(), probe.options.clone().into_iter().collect())
+            .is_some()
+        {
             bail!("A probe on {probe} is already attached");
         }
 
@@ -515,12 +495,7 @@ impl ProbeRuntimeManager {
             hooks.extend(self.hooks.clone());
         }
 
-        builder.init(
-            self.map_fds.clone(),
-            hooks,
-            self.filters.clone(),
-            probe.ctx_hook.clone(),
-        )?;
+        builder.init(self.map_fds.clone(), hooks, probe.ctx_hook.clone())?;
 
         Self::attach_probe(
             &mut builder,
@@ -535,7 +510,12 @@ impl ProbeRuntimeManager {
     /// Attach a new generic probe.
     #[cfg(not(test))]
     pub(crate) fn attach_generic_probe(&mut self, probe: &mut Probe) -> Result<()> {
-        if !self.probes.insert(probe.key()) {
+        self.prepare_probe(probe)?;
+        if self
+            .probes
+            .insert(probe.key(), probe.options.clone().into_iter().collect())
+            .is_some()
+        {
             bail!("A probe on {probe} is already attached");
         }
 
@@ -547,7 +527,12 @@ impl ProbeRuntimeManager {
 
     /// Get the list of all currently attached probes.
     pub(crate) fn attached_probes(&self) -> Vec<String> {
-        self.probes.clone().into_iter().collect()
+        self.probes.keys().cloned().collect()
+    }
+
+    /// Get the list of all currently attached probes with a specific option.
+    pub(crate) fn get_probe_opts(&self, probe: &str) -> Option<&Vec<ProbeOption>> {
+        self.probes.get(probe)
     }
 
     /// Detach all probes.

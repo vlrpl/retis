@@ -108,12 +108,12 @@ $ make release
 $ ./target/release/retis --help
 ```
 
-Finally, profiles should be installed in either `/etc/retis/profiles` or
+Finally, profiles should be installed in either `/usr/share/retis/profiles` or
 `$HOME/.config/retis/profiles`.
 
 ```none
-$ mkdir -p /etc/retis/profiles
-$ cp retis/profiles/* /etc/retis/profiles
+$ mkdir -p /usr/share/retis/profiles
+$ cp retis/profiles/* /usr/share/retis/profiles
 ```
 
 #### Cross-compilation
@@ -123,8 +123,15 @@ aarch64. The target is defined using the `CARGO_BUILD_TARGET` environment
 variable, which is documented in the
 [Rust reference](https://doc.rust-lang.org/cargo/reference/config.html#buildtarget).
 
+When python support is built (it is enabled by default), `PYO3_CROSS_LIB_DIR=`
+needs to be set to the directory containing the target's libpython dynamic
+shared object. To disable Python support, use
+`CARGO_CMD_OPTS=--no-default-features`.
+
 ```none
-$ CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu make release
+$ CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu \
+      PYO3_CROSS_LIB_DIR=sysroot/usr/lib/python3.14 \
+      make release
 $ file ./target/aarch64-unknown-linux-gnu/release/retis
 [...] ARM aarch64, [...]
 ```
@@ -132,7 +139,7 @@ $ file ./target/aarch64-unknown-linux-gnu/release/retis
 ### Running as non-root
 
 Retis can run as non-root if it has the right capabilities. Note that doing this
-alone often means `debugfs` won't be available as it's usually owned by `root`
+alone often means `tracefs` won't be available as it's usually owned by `root`
 only and Retis won't be able to fully filter probes.
 
 ```none

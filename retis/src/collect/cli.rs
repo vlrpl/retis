@@ -29,8 +29,7 @@ pub(crate) struct Collect {
         value_delimiter=',',
         help = "Comma-separated list of collectors to enable.
 
-If this is not set and no profile is used (\"--profile\") all collectors are
-enabled unless a prerequisite is missing."
+If this is not set all collectors are enabled, unless a prerequisite is missing."
     )]
     pub(super) collectors: Option<Vec<String>>,
     // Use the plural in the struct but singular for the cli parameter as we're
@@ -40,7 +39,7 @@ enabled unless a prerequisite is missing."
         short,
         long,
         help = "Add a probe on the given target. Can be used multiple times. Probes should
-follow the [TYPE:]TARGET pattern.
+follow the [TYPE:]TARGET[/OPTIONS] pattern.
 
 When TYPE is not specified it is set to 'kprobe', except if a single ':' is found in TARGET
 in which case 'raw_tracepoint' is set instead. Those default types might evolve over time.
@@ -52,6 +51,10 @@ Valid TYPEs:
 
 Wildcards (*) can be used, eg. \"kprobe:tcp_*\" or \"tp:skb:*\".
 
+OPTIONS can be used to configure probes on a per-probe basis. Options are a list of keywords
+separated by '/' (e.g. TARGET/opt1/opt2). Valid OPTIONS:
+- stack: enables stack traces retrieval (same as \"--stack\", on a per-probe basis).
+
 If this is not set, no profile is used (\"--profile\") and no collector is
 explicitly enabled (\"--collector\"); \"net:netif_receive_skb\" and
 \"net:net_dev_start_xmit\" are automatically used. Also note the
@@ -59,7 +62,8 @@ explicitly enabled (\"--collector\"); \"net:netif_receive_skb\" and
 
 Examples:
   --probe tp:skb:kfree_skb --probe kprobe:consume_skb
-  --probe skb:kfree_skb --probe consume_skb"
+  --probe skb:kfree_skb --probe consume_skb
+  -p skb:kfree_skb/stack -p consume_skb"
     )]
     pub(super) probes: Vec<String>,
     #[arg(
@@ -137,8 +141,9 @@ Notes:
         help = r#"Allow the tool to setup all the system changes needed to make the tracing
 fully operational:
 
-- Mounting debugfs to /sys/kernel/debug if not already mounted. If Retis mounted debugfs it
-  will unmount it when stopped.
+- Mounting tracefs to /sys/kernel/tracing if not already mounted. If Retis mounted tracefs it
+  will unmount it when stopped. On older kernels it might mount (and unmount) debugfs to
+  /sys/kernel/debug instead.
 
 - In the case the nft collector is used, creating a dummy table called "Retis_Table"
   as the following:

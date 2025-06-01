@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::OpenOptions,
     io::{self, BufWriter},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
     time::Duration,
@@ -21,7 +22,7 @@ use super::{
     },
 };
 use crate::{
-    bindings::packet_filter_uapi,
+    bindings::{meta_filter_uapi, packet_filter_uapi},
     cli::{CliDisplayFormat, MainConfig},
     collect::collector::{section_factories, skb::SkbEventFactory},
     core::{
@@ -108,11 +109,8 @@ pub(crate) struct Collectors {
     tracking_config_map: Option<libbpf_rs::MapHandle>,
     // Retis events factory.
     events_factory: Arc<RetisEventsFactory>,
-    // Are we in "auto mode", aka. allowed to do parts of the collection
-    // configuration automatically?
-    auto_mode: bool,
-    // Did we mount debugfs ourselves?
-    mounted_debugfs: bool,
+    // Did we mount tracefs/debugfs ourselves? If so, contains the target dir.
+    mounted: Option<PathBuf>,
 }
 
 impl Collectors {
@@ -129,8 +127,7 @@ impl Collectors {
             tracking_gc: None,
             tracking_config_map: None,
             events_factory: Arc::new(RetisEventsFactory::default()),
-            auto_mode: false,
-            mounted_debugfs: false,
+            mounted: None,
         })
     }
 
@@ -174,7 +171,10 @@ impl Collectors {
         if let Some(f) = &collect.meta_filter {
             let fb =
                 FilterMeta::from_string(f.to_string()).map_err(|e| anyhow!("meta filter: {e}"))?;
-            probes.register_filter(Filter::Meta(fb))?;
+            probes.register_filter(Filter::Meta(
+                meta_filter_uapi::META,
+                BpfFilter(fb.to_bytes()),
+            ))?;
         }
 
         Ok(())
@@ -191,28 +191,17 @@ impl Collectors {
             bail!("Retis needs to be run as root when --allow-system-changes is used");
         }
 
-        // Mount debugfs if not already mounted (and if we can). This is
+        // Mount tracefs if not already mounted (and if we can). This is
         // especially useful when running Retis in namespaces and containers.
         if collect.allow_system_changes {
-            const DEBUGFS_TARGET: &str = "/sys/kernel/debug";
-
-            let err = mount(
-                None::<&std::path::Path>,
-                std::path::Path::new(DEBUGFS_TARGET),
-                Some("debugfs"),
-                MsFlags::empty(),
-                None::<&str>,
-            );
-
-            match err {
-                Ok(_) => {
-                    debug!("Mounted debugfs to {DEBUGFS_TARGET}");
-                    self.mounted_debugfs = true;
+            if let Some(mounted) = Self::try_mount("tracefs", "/sys/kernel/tracing") {
+                if mounted {
+                    self.mounted = Some(PathBuf::from("/sys/kernel/tracing"));
                 }
-                Err(errno) => match errno {
-                    Errno::EBUSY => debug!("Debugfs is already mounted to {DEBUGFS_TARGET}"),
-                    _ => warn!("Could not mount debugfs to {DEBUGFS_TARGET}: {errno}"),
-                },
+            } else if let Some(mounted) = Self::try_mount("debugfs", "/sys/kernel/debug") {
+                if mounted {
+                    self.mounted = Some(PathBuf::from("/sys/kernel/debug"));
+                }
             }
         }
 
@@ -220,20 +209,51 @@ impl Collectors {
         collection_prerequisites()
     }
 
+    /// Try mounting a filesystem to a target directory. Returns:
+    /// - Some(true) if the filesystem was mounted.
+    /// - Some(false) if a filesystem is already mounted in the target.
+    /// - None otherwise.
+    fn try_mount(fs: &str, target: &str) -> Option<bool> {
+        let err = mount(
+            None::<&std::path::Path>,
+            Path::new(target),
+            Some(fs),
+            MsFlags::empty(),
+            None::<&str>,
+        );
+
+        match err {
+            Ok(_) => {
+                debug!("Mounted {fs} to {target}");
+                Some(true)
+            }
+            Err(errno) => match errno {
+                Errno::EBUSY => {
+                    debug!("{fs} is already mounted to {target}");
+                    Some(false)
+                }
+                _ => {
+                    warn!("Could not mount {fs} to {target}: {errno}");
+                    None
+                }
+            },
+        }
+    }
+
     /// Initialize all collectors by calling their `init()` function.
     pub(super) fn init(&mut self, main_config: &MainConfig, collect: &Collect) -> Result<()> {
         self.run.register_term_signals()?;
 
-        // Determine if auto mode is enabled:
-        // - No profile is used.
-        // - No collector was explicitly enabled.
-        self.auto_mode = main_config.profile.is_empty() && collect.collectors.is_none();
-
         // Check if we need to report stack traces in the events.
-        if collect.stack || collect.probe_stack {
+        if collect.stack {
             self.probes
                 .builder_mut()?
-                .set_probe_opt(probe::ProbeOption::StackTrace)?;
+                .set_probe_opt(probe::ProbeOption::ReportStack)?;
+        }
+        if collect.probe_stack {
+            self.probes
+                .builder_mut()?
+                .set_probe_opt(probe::ProbeOption::ProbeStack)?;
         }
 
         // Generate an initial event with the startup section.
@@ -269,8 +289,8 @@ impl Collectors {
             // Check if the collector can run (prerequisites are met).
             if let Err(e) = c.can_run(collect) {
                 // Do not issue an error if the list of collectors was set by
-                // default, aka. auto-detect mode.
-                if self.auto_mode {
+                // default.
+                if collect.collectors.is_none() {
                     debug!("Cannot run collector {name}: {e}");
                     continue;
                 } else {
@@ -297,8 +317,9 @@ impl Collectors {
             self.collectors.insert(name.to_string(), c);
         }
 
-        //  If auto-mode is used, print the list of collectors that were started.
-        if self.auto_mode {
+        //  If the default set of collectors is used, print the list of those
+        //  started.
+        if collect.collectors.is_none() {
             info!(
                 "Collector(s) started: {}",
                 self.collectors
@@ -317,9 +338,16 @@ impl Collectors {
         }
         Self::setup_filters(self.probes.builder_mut()?, collect)?;
 
-        // If auto_mode is on and no probe is given, find the right set
-        // automagically.
-        if self.auto_mode && collect.probes.is_empty() {
+        // If no probe was explicitly set, find the right set automagically. In
+        // addition check:
+        // - No profile is used, this is to allow profiles to only use probes
+        //   added by collectors (e.g. by skb-drop) and for better expectations.
+        // - No collector is explicitly enabled, this is because collectors
+        //   might add probes and we could be interested in getting those only.
+        if main_config.profile.is_empty()
+            && collect.probes.is_empty()
+            && collect.collectors.is_none()
+        {
             let mut probes = if collect.probe_stack {
                 // If --probe-stack is used, use skb:consume_skb & skb:kfree_skb
                 // as a starting point (these should capture most if not all of
@@ -473,10 +501,10 @@ impl Collectors {
         debug!("Stopping events");
         self.factory.stop()?;
 
-        // If we mounted debugfs, unmount it.
-        if self.mounted_debugfs {
-            debug!("Unmounting debugfs");
-            umount("/sys/kernel/debug")?;
+        // If we mounted a fs, unmount it.
+        if let Some(ref path) = self.mounted {
+            debug!("Unmounting {}", path.display());
+            umount(path)?;
         }
 
         Ok(())
@@ -542,11 +570,7 @@ impl Collectors {
         }
 
         let (mut iccount, mut eccount) = (0, 0);
-        let mut probe_stack = ProbeStack::new(
-            collect.stack,
-            self.probes.runtime_mut()?.attached_probes(),
-            self.known_kernel_types.clone(),
-        );
+        let mut probe_stack = ProbeStack::new(self.known_kernel_types.clone());
 
         use EventResult::*;
         while self.run.running() {
