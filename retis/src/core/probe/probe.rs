@@ -26,8 +26,20 @@ pub(crate) enum ProbeType {
 /// Probe options, to toggle opt-in/out features.
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) enum ProbeOption {
-    StackTrace,
+    ProbeStack,
+    ReportStack,
     NoGenericHook,
+}
+
+impl TryFrom<&str> for ProbeOption {
+    type Error = anyhow::Error;
+
+    fn try_from(option: &str) -> Result<Self> {
+        Ok(match option {
+            "stack" => Self::ReportStack,
+            _ => bail!("'{option}' is an invalid probe option."),
+        })
+    }
 }
 
 /// Represents a probe we can install in a target (kernel, user space program,
@@ -124,7 +136,6 @@ impl Probe {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub(crate) fn set_ctx_hook(&mut self, hook: Hook) -> Result<()> {
         if self.ctx_hook.is_some() {
             bail!("Context hook can only be set once");
@@ -182,11 +193,14 @@ impl Probe {
         }
 
         // Merge options.
-        // - ProbeOption::StackTrace: if any of the probes has it, it should be
+        // - ProbeOption::{ProbeStack,ReportStack}: if any of the probes has it, it should be
         //   set in the resulting probe.
         // - ProbeOption::NoGenericHook: has to be set in both probes to be set in the
         //   resulting probe.
-        if let Some(opt) = other.options.take(&ProbeOption::StackTrace) {
+        if let Some(opt) = other.options.take(&ProbeOption::ProbeStack) {
+            self.options.insert(opt);
+        }
+        if let Some(opt) = other.options.take(&ProbeOption::ReportStack) {
             self.options.insert(opt);
         }
         if !other.options.contains(&ProbeOption::NoGenericHook) {
@@ -206,7 +220,7 @@ impl fmt::Display for Probe {
             ProbeType::Kprobe(symbol) => write!(f, "kprobe:{symbol}"),
             ProbeType::Kretprobe(symbol) => write!(f, "kretprobe:{symbol}"),
             ProbeType::RawTracepoint(symbol) => write!(f, "tp:{symbol}"),
-            ProbeType::Usdt(symbol) => write!(f, "usdt {symbol}"),
+            ProbeType::Usdt(symbol) => write!(f, "usdt:{symbol}"),
         }
     }
 }

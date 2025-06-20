@@ -4,12 +4,13 @@ use std::{
     collections::{HashMap, HashSet},
     fs::OpenOptions,
     io::{self, BufWriter},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use log::{debug, info, warn};
 use nix::{errno::Errno, mount::*, unistd::Uid};
 
@@ -21,11 +22,11 @@ use super::{
     },
 };
 use crate::{
-    bindings::packet_filter_uapi,
+    bindings::{meta_filter_uapi, packet_filter_uapi},
     cli::{CliDisplayFormat, MainConfig},
-    collect::collector::{section_factories, skb::SkbEventFactory},
+    collect::collector::section_factories,
     core::{
-        events::{BpfEventsFactory, EventResult, FactoryId, RetisEventsFactory},
+        events::{BpfEventsFactory, EventResult, RetisEventsFactory, SectionFactories},
         filters::{
             filters::{BpfFilter, Filter},
             meta::filter::FilterMeta,
@@ -84,7 +85,8 @@ pub(crate) trait Collector {
         &mut self,
         collect: &Collect,
         probes: &mut ProbeBuilderManager,
-        events_factory: Arc<RetisEventsFactory>,
+        retis_factory: Arc<RetisEventsFactory>,
+        section_factories: &mut SectionFactories,
     ) -> Result<()>;
     /// Start the collector.
     fn start(&mut self) -> Result<()> {
@@ -108,11 +110,8 @@ pub(crate) struct Collectors {
     tracking_config_map: Option<libbpf_rs::MapHandle>,
     // Retis events factory.
     events_factory: Arc<RetisEventsFactory>,
-    // Are we in "auto mode", aka. allowed to do parts of the collection
-    // configuration automatically?
-    auto_mode: bool,
-    // Did we mount debugfs ourselves?
-    mounted_debugfs: bool,
+    // Did we mount tracefs/debugfs ourselves? If so, contains the target dir.
+    mounted: Option<PathBuf>,
 }
 
 impl Collectors {
@@ -129,8 +128,7 @@ impl Collectors {
             tracking_gc: None,
             tracking_config_map: None,
             events_factory: Arc::new(RetisEventsFactory::default()),
-            auto_mode: false,
-            mounted_debugfs: false,
+            mounted: None,
         })
     }
 
@@ -174,7 +172,10 @@ impl Collectors {
         if let Some(f) = &collect.meta_filter {
             let fb =
                 FilterMeta::from_string(f.to_string()).map_err(|e| anyhow!("meta filter: {e}"))?;
-            probes.register_filter(Filter::Meta(fb))?;
+            probes.register_filter(Filter::Meta(
+                meta_filter_uapi::META,
+                BpfFilter(fb.to_bytes()),
+            ))?;
         }
 
         Ok(())
@@ -191,28 +192,17 @@ impl Collectors {
             bail!("Retis needs to be run as root when --allow-system-changes is used");
         }
 
-        // Mount debugfs if not already mounted (and if we can). This is
+        // Mount tracefs if not already mounted (and if we can). This is
         // especially useful when running Retis in namespaces and containers.
         if collect.allow_system_changes {
-            const DEBUGFS_TARGET: &str = "/sys/kernel/debug";
-
-            let err = mount(
-                None::<&std::path::Path>,
-                std::path::Path::new(DEBUGFS_TARGET),
-                Some("debugfs"),
-                MsFlags::empty(),
-                None::<&str>,
-            );
-
-            match err {
-                Ok(_) => {
-                    debug!("Mounted debugfs to {DEBUGFS_TARGET}");
-                    self.mounted_debugfs = true;
+            if let Some(mounted) = Self::try_mount("tracefs", "/sys/kernel/tracing") {
+                if mounted {
+                    self.mounted = Some(PathBuf::from("/sys/kernel/tracing"));
                 }
-                Err(errno) => match errno {
-                    Errno::EBUSY => debug!("Debugfs is already mounted to {DEBUGFS_TARGET}"),
-                    _ => warn!("Could not mount debugfs to {DEBUGFS_TARGET}: {errno}"),
-                },
+            } else if let Some(mounted) = Self::try_mount("debugfs", "/sys/kernel/debug") {
+                if mounted {
+                    self.mounted = Some(PathBuf::from("/sys/kernel/debug"));
+                }
             }
         }
 
@@ -220,34 +210,53 @@ impl Collectors {
         collection_prerequisites()
     }
 
-    /// Initialize all collectors by calling their `init()` function.
-    pub(super) fn init(&mut self, main_config: &MainConfig, collect: &Collect) -> Result<()> {
-        self.run.register_term_signals()?;
+    /// Try mounting a filesystem to a target directory. Returns:
+    /// - Some(true) if the filesystem was mounted.
+    /// - Some(false) if a filesystem is already mounted in the target.
+    /// - None otherwise.
+    fn try_mount(fs: &str, target: &str) -> Option<bool> {
+        let err = mount(
+            None::<&std::path::Path>,
+            Path::new(target),
+            Some(fs),
+            MsFlags::empty(),
+            None::<&str>,
+        );
 
-        // Determine if auto mode is enabled:
-        // - No profile is used.
-        // - No collector was explicitly enabled.
-        self.auto_mode = main_config.profile.is_empty() && collect.collectors.is_none();
+        match err {
+            Ok(_) => {
+                debug!("Mounted {fs} to {target}");
+                Some(true)
+            }
+            Err(errno) => match errno {
+                Errno::EBUSY => {
+                    debug!("{fs} is already mounted to {target}");
+                    Some(false)
+                }
+                _ => {
+                    warn!("Could not mount {fs} to {target}: {errno}");
+                    None
+                }
+            },
+        }
+    }
 
+    fn init_collectors(
+        &mut self,
+        section_factories: &mut SectionFactories,
+        collect: &Collect,
+    ) -> Result<()> {
         // Check if we need to report stack traces in the events.
-        if collect.stack || collect.probe_stack {
+        if collect.stack {
             self.probes
                 .builder_mut()?
-                .set_probe_opt(probe::ProbeOption::StackTrace)?;
+                .set_probe_opt(probe::ProbeOption::ReportStack)?;
         }
-
-        // Generate an initial event with the startup section.
-        self.events_factory.add_event(|event| {
-            event.insert_section(
-                SectionId::Startup,
-                Box::new(StartupEvent {
-                    retis_version: option_env!("RELEASE_VERSION")
-                        .unwrap_or("unspec")
-                        .to_string(),
-                    clock_monotonic_offset: monotonic_clock_offset()?,
-                }),
-            )
-        })?;
+        if collect.probe_stack {
+            self.probes
+                .builder_mut()?
+                .set_probe_opt(probe::ProbeOption::ProbeStack)?;
+        }
 
         let collectors = match &collect.collectors {
             Some(collectors) => collectors.iter().map(|c| c.as_ref()).collect::<Vec<&str>>(),
@@ -269,8 +278,8 @@ impl Collectors {
             // Check if the collector can run (prerequisites are met).
             if let Err(e) = c.can_run(collect) {
                 // Do not issue an error if the list of collectors was set by
-                // default, aka. auto-detect mode.
-                if self.auto_mode {
+                // default.
+                if collect.collectors.is_none() {
                     debug!("Cannot run collector {name}: {e}");
                     continue;
                 } else {
@@ -278,13 +287,13 @@ impl Collectors {
                 }
             }
 
-            if let Err(e) = c.init(
+            c.init(
                 collect,
                 self.probes.builder_mut()?,
                 Arc::clone(&self.events_factory),
-            ) {
-                bail!("Could not initialize collector {name}: {e}");
-            }
+                section_factories,
+            )
+            .context(format!("Could not initialize the {name} collector"))?;
 
             // If the collector provides known kernel types, meaning we have a
             // dynamic collector, retrieve and store them for later processing.
@@ -297,8 +306,9 @@ impl Collectors {
             self.collectors.insert(name.to_string(), c);
         }
 
-        //  If auto-mode is used, print the list of collectors that were started.
-        if self.auto_mode {
+        //  If the default set of collectors is used, print the list of those
+        //  started.
+        if collect.collectors.is_none() {
             info!(
                 "Collector(s) started: {}",
                 self.collectors
@@ -308,18 +318,45 @@ impl Collectors {
                     .join(", ")
             );
         }
+        Ok(())
+    }
 
+    // Generate an initial event with the startup section.
+    fn initial_event(&mut self) -> Result<()> {
+        self.events_factory.add_event(|event| {
+            event.insert_section(
+                SectionId::Startup,
+                Box::new(StartupEvent {
+                    retis_version: option_env!("RELEASE_VERSION")
+                        .unwrap_or("unspec")
+                        .to_string(),
+                    clock_monotonic_offset: monotonic_clock_offset()?,
+                }),
+            )
+        })
+    }
+
+    fn config_filters(&mut self, collect: &Collect) -> Result<()> {
         // Initialize tracking & filters.
         if !cfg!(test) && self.known_kernel_types.contains("struct sk_buff *") {
             let (gc, map) = init_tracking(self.probes.builder_mut()?)?;
             self.tracking_gc = Some(gc);
             self.tracking_config_map = Some(map);
         }
-        Self::setup_filters(self.probes.builder_mut()?, collect)?;
+        Self::setup_filters(self.probes.builder_mut()?, collect)
+    }
 
-        // If auto_mode is on and no probe is given, find the right set
-        // automagically.
-        if self.auto_mode && collect.probes.is_empty() {
+    fn register_probes(&mut self, collect: &Collect, main_config: &MainConfig) -> Result<()> {
+        // If no probe was explicitly set, find the right set automagically. In
+        // addition check:
+        // - No profile is used, this is to allow profiles to only use probes
+        //   added by collectors (e.g. by skb-drop) and for better expectations.
+        // - No collector is explicitly enabled, this is because collectors
+        //   might add probes and we could be interested in getting those only.
+        if main_config.profile.is_empty()
+            && collect.probes.is_empty()
+            && collect.collectors.is_none()
+        {
             let mut probes = if collect.probe_stack {
                 // If --probe-stack is used, use skb:consume_skb & skb:kfree_skb
                 // as a starting point (these should capture most if not all of
@@ -369,36 +406,14 @@ impl Collectors {
         collect.probes.iter().try_for_each(|p| -> Result<()> {
             probe_from_cli(p, filter)?
                 .drain(..)
-                .try_for_each(|p| self.probes.builder_mut()?.register_probe(p))?;
-            Ok(())
-        })?;
-
-        Ok(())
+                .try_for_each(|p| self.probes.builder_mut()?.register_probe(p))
+        })
     }
 
     /// Start the event retrieval for all collectors by calling
     /// their `start()` function.
-    pub(super) fn start(&mut self, collect: &Collect) -> Result<()> {
-        // Create factories.
-        #[cfg_attr(test, allow(unused_mut))]
-        let mut section_factories = section_factories()?;
-
-        // Configure factories based on collectors config.
-        if let Some(skb_factory) = section_factories.get_mut(&FactoryId::Skb) {
-            skb_factory
-                .as_any_mut()
-                .downcast_mut::<SkbEventFactory>()
-                .ok_or_else(|| anyhow!("Failed to downcast SkbEventFactory"))?
-                .report_eth(
-                    collect
-                        .collector_args
-                        .skb
-                        .skb_sections
-                        .iter()
-                        .any(|s| s == "all" || s == "eth"),
-                );
-        }
-
+    #[cfg_attr(test, allow(unused_mut))]
+    fn start_collectors(&mut self, mut section_factories: SectionFactories) -> Result<()> {
         #[cfg(not(test))]
         {
             let sm = init_stack_map()?;
@@ -411,17 +426,10 @@ impl Collectors {
             self.probes
                 .builder_mut()?
                 .reuse_map("log_map", self.factory.log_map_fd())?;
-            match section_factories.get_mut(&FactoryId::Kernel) {
-                Some(kernel_factory) => {
-                    kernel_factory
-                        .as_any_mut()
-                        .downcast_mut::<KernelEventFactory>()
-                        .ok_or_else(|| anyhow!("Failed to downcast KernelEventFactory"))?
-                        .stack_map = Some(sm)
-                }
 
-                None => bail!("Can't get kernel section factory"),
-            }
+            section_factories
+                .get_mut::<KernelEventFactory>(&crate::core::events::FactoryId::Kernel)?
+                .stack_map = Some(sm);
         }
 
         if let Some(gc) = &mut self.tracking_gc {
@@ -437,13 +445,27 @@ impl Collectors {
 
         for (name, c) in &mut self.collectors {
             debug!("Starting collector {name}");
-            if c.start().is_err() {
-                warn!("Could not start collector {name}");
+            if let Err(e) = c.start() {
+                warn!("Could not start collector {name}: {e}");
             }
         }
 
         // Start factory
         self.factory.start(section_factories)?;
+
+        Ok(())
+    }
+
+    /// Configure collection.
+    pub(super) fn config(&mut self, collect: &Collect, main_config: &MainConfig) -> Result<()> {
+        let mut section_factories = section_factories()?;
+
+        self.run.register_term_signals()?;
+        self.initial_event()?;
+        self.init_collectors(&mut section_factories, collect)?;
+        self.config_filters(collect)?;
+        self.register_probes(collect, main_config)?;
+        self.start_collectors(section_factories)?;
 
         Ok(())
     }
@@ -473,10 +495,10 @@ impl Collectors {
         debug!("Stopping events");
         self.factory.stop()?;
 
-        // If we mounted debugfs, unmount it.
-        if self.mounted_debugfs {
-            debug!("Unmounting debugfs");
-            umount("/sys/kernel/debug")?;
+        // If we mounted a fs, unmount it.
+        if let Some(ref path) = self.mounted {
+            debug!("Unmounting {}", path.display());
+            umount(path)?;
         }
 
         Ok(())
@@ -542,11 +564,7 @@ impl Collectors {
         }
 
         let (mut iccount, mut eccount) = (0, 0);
-        let mut probe_stack = ProbeStack::new(
-            collect.stack,
-            self.probes.runtime_mut()?.attached_probes(),
-            self.known_kernel_types.clone(),
-        );
+        let mut probe_stack = ProbeStack::new(self.known_kernel_types.clone());
 
         use EventResult::*;
         while self.run.running() {
