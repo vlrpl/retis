@@ -15,10 +15,10 @@ collectors can be enabled individually and will act on different parts of the
 networking stack to retrieve specific information. Currently supported
 collectors are [listed below](#collectors).
 
-Without arguments (specifically when `--profile` and `--collector are all unset)
-Retis will will try to load all collectors if their individual requirements are
-met (e.g. the `ovs` collector needs the OpenVSwitch kernel module to be loaded).
-If in addition no probe is specificed (`--probe` is unset) Retis will use a
+If no collector is explicitly enabled (`--collectors` is unset) Retis will try
+to load all collectors if their individual requirements are met (e.g. the `ovs`
+collector needs the OpenVSwitch kernel module to be loaded). If in addition no
+probe is specified (`--probe` is unset) and no profile is used, Retis will use a
 default set of probes (`net:netif_receive_skb` and `net:net_dev_start_xmit`).
 
 But collectors can be explicitly selected too (here if prerequisites are not met
@@ -147,10 +147,19 @@ $ retis collect -p skb:kfree_skb -p ovs_ct_clear
 ...
 ```
 
-New profiles can be written and used if stored in `/etc/retis/profiles` or
-`$HOME/.config/profiles`. Here is an
-[example profile](https://github.com/retis-org/retis/blob/main/retis/test_data/profiles/example.yaml)
+New and custom profiles can be used directly by providing the full path or used
+like any other profile if stored in `$HOME/.config/retis/profiles`. Here is an
+[example
+profile](https://github.com/retis-org/retis/blob/main/retis/test_data/profiles/example.yaml)
 with inlined comments. If a profile is generic enough, consider contributing it!
+
+A custom directory containing profiles can be used. This is handy for sharing
+out-of-tree profiles.
+
+```none
+$ retis -P /custom/path profile list
+...
+```
 
 ## Post-processing
 

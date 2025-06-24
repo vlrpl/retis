@@ -46,11 +46,21 @@ available. It is of type `EventFile`.
 ```python
 $ cat myscript.py
 for event in reader.events():
-    if "skb" in event and getattr(event["skb"], "tcp", None):
+    if event.skb and event.skb.tcp:
         print("TCP event with dport: {}".format(
-            event["skb"].tcp.dport))
+            event.skb.tcp.dport))
 
 $ retis python myscript.py
+```
+
+Python scripts can be stored in `$HOME/.config/retis/python` or
+`/usr/share/retis/python` and executed using their name:
+
+```text
+$ ls $HOME/.config/retis/python
+foo.py
+$ retis python foo
+...
 ```
 
 If no script is provided, an interactive shell is created. Example:

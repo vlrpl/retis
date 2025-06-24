@@ -24,7 +24,7 @@ use pcap_file::{
 use crate::{
     cli::*,
     core::{kernel::Symbol, probe::kernel::utils::*},
-    events::{file::FileEventsFactory, CommonEvent, KernelEvent, SkbEvent, *},
+    events::{file::FileEventsFactory, *},
     helpers::signals::Running,
 };
 
@@ -51,6 +51,8 @@ struct EventParser {
     ifaces: HashMap<u64, u32>,
     /// Statistics.
     stats: EventParserStats,
+    /// Time offset
+    ts_off: Option<TimeSpec>,
 }
 
 // Unwrap a Some(_) value or return from the function.
@@ -72,6 +74,7 @@ impl EventParser {
         Self {
             ifaces: HashMap::new(),
             stats: EventParserStats::default(),
+            ts_off: None,
         }
     }
 
@@ -80,10 +83,12 @@ impl EventParser {
         // Having a common & a kernel section is mandatory for now, seeing a
         // filtered event w/o one of those is bogus.
         let common = event
-            .get_section::<CommonEvent>(SectionId::Common)
+            .common
+            .as_ref()
             .ok_or_else(|| anyhow!("No common section in event"))?;
         let kernel = event
-            .get_section::<KernelEvent>(SectionId::Kernel)
+            .kernel
+            .as_ref()
             .ok_or_else(|| anyhow!("No skb section in event"))?;
 
         self.stats.processed += 1;
@@ -91,10 +96,7 @@ impl EventParser {
         // The skb & packet sections are mandatory for us to generate PCAP
         // events, but they might not be present in some filtered events. Stats
         // are kept here to inform the user.
-        let skb = some_or_return!(
-            event.get_section::<SkbEvent>(SectionId::Skb),
-            self.stats.missing_skb
-        );
+        let skb = some_or_return!(&event.skb, self.stats.missing_skb);
         let packet = some_or_return!(skb.packet.as_ref(), self.stats.missing_packet);
 
         // The dev & ns sections are best to have but not mandatory to generate
@@ -134,6 +136,7 @@ impl EventParser {
                                 0 => "Fake interface".to_string(),
                                 _ => format!("ifindex={}", ifindex),
                             })),
+                            InterfaceDescriptionOption::IfTsResol(9),
                         ],
                     }
                     .into_block(),
@@ -149,7 +152,9 @@ impl EventParser {
         v.push(
             EnhancedPacketBlock {
                 interface_id: id,
-                timestamp: Duration::from_nanos(common.timestamp),
+                timestamp: Duration::from_nanos(i64::from(
+                    TimeSpec::new(0, common.timestamp as i64) + self.ts_off.unwrap_or_default(),
+                ) as u64),
                 original_len: packet.len,
                 data: Cow::Borrowed(&packet.packet.0),
                 options: vec![EnhancedPacketOption::Comment(Cow::Owned(format!(
@@ -236,7 +241,7 @@ impl SubCommandParserRunner for Pcap {
         // The following unwrap() will never fail as Clap makes sure that either
         // list_probes is true, or probe is Some().
         let probe = self.cmd.probe.as_ref().unwrap();
-        let (probe_type, target) = parse_cli_probe(probe)?;
+        let (probe_type, target, _) = parse_cli_probe(probe)?;
         let symbol = Symbol::from_name_no_inspect(target);
 
         // Filtering logic.
@@ -300,7 +305,7 @@ where
     while run.running() {
         match factory.next_event()? {
             Some(event) => {
-                if let Some(kernel) = event.get_section::<KernelEvent>(SectionId::Kernel) {
+                if let Some(kernel) = &event.kernel {
                     // Check the event is matching the requested symbol.
                     if !filter(&kernel.probe_type, &kernel.symbol) {
                         continue;
@@ -312,6 +317,8 @@ where
                     for b in parsed_blocks {
                         writer_callback(&b)?;
                     }
+                } else if let Some(common) = event.startup {
+                    parser.ts_off = Some(common.clock_monotonic_offset);
                 }
             }
             None => break,
@@ -342,22 +349,19 @@ fn list_probes(input: &Path) -> Result<Vec<String>> {
         match factory.next_event()? {
             None => break,
             Some(event) => {
-                if let Some(kernel) = event.get_section::<KernelEvent>(SectionId::Kernel) {
+                if let Some(kernel) = event.kernel {
                     let probe_name = format!("{}:{}", kernel.probe_type, kernel.symbol);
                     if probe_set.contains(&probe_name) {
                         continue;
                     }
                     // Having a common section is mandatory for now, seeing a
                     // filtered event w/o one of those is bogus.
-                    if event
-                        .get_section::<CommonEvent>(SectionId::Common)
-                        .is_none()
-                    {
+                    if event.common.is_none() {
                         continue;
                     }
                     // The skb & packet sections are mandatory for us to generate PCAP
                     // events, but they might not be present in some filtered events.
-                    match event.get_section::<SkbEvent>(SectionId::Skb) {
+                    match event.skb {
                         None => {}
                         Some(skb) => {
                             if skb.packet.as_ref().is_some() {
@@ -402,6 +406,7 @@ mod tests {
                             InterfaceDescriptionOption::IfDescription(Cow::Owned(
                                 "ifindex=10".to_string(),
                             )),
+                            InterfaceDescriptionOption::IfTsResol(9),
                         ],
                     }),
                     Block::EnhancedPacket(EnhancedPacketBlock {
@@ -414,7 +419,7 @@ mod tests {
                             46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
                         ]),
                         interface_id: 0,
-                        timestamp: Duration::from_nanos(30419169125909),
+                        timestamp: Duration::from_nanos(1742339565860167909),
                         original_len: 98,
                         options: vec![EnhancedPacketOption::Comment(Cow::Owned(
                             "probe=kretprobe:ovs_dp_upcall".to_string(),
@@ -430,6 +435,7 @@ mod tests {
                             InterfaceDescriptionOption::IfDescription(Cow::Owned(
                                 "ifindex=12".to_string(),
                             )),
+                            InterfaceDescriptionOption::IfTsResol(9),
                         ],
                     }),
                     Block::EnhancedPacket(EnhancedPacketBlock {
@@ -442,7 +448,7 @@ mod tests {
                             47, 48, 49, 50, 51, 52, 53, 54, 55,
                         ]),
                         interface_id: 1,
-                        timestamp: Duration::from_nanos(30419169372774),
+                        timestamp: Duration::from_nanos(1742339565860414774),
                         original_len: 98,
                         options: vec![EnhancedPacketOption::Comment(Cow::Owned(
                             "probe=kretprobe:ovs_dp_upcall".to_string(),
@@ -457,10 +463,7 @@ mod tests {
                 "test_data/test_events_packets_invalid_ct.json",
                 "",
                 "",
-                Err(anyhow!(
-                    "Failed to create EventSection for owner ct from \
-                json: missing field `ct_status`"
-                )),
+                Err(anyhow!("missing field `ct_status` at line 1 column 404")),
                 Vec::<Block>::new(),
             ),
             // No packet data provided.
@@ -562,12 +565,14 @@ mod tests {
             // Both for list-probes and for generating the actual pcap.
             (
                 "test_data/test_events_packets_invalid_ct.json",
-                Err(anyhow!("Failed to create EventSection for owner ct from json: missing field `ct_status`")),
+                Err(anyhow!("missing field `ct_status` at line 1 column 404")),
             ),
             // Completely missing probe section.
             (
                 "test_data/test_events_bench_no_probes.json",
-                Err(anyhow!("Could not find any compatible probe in provided data set")),
+                Err(anyhow!(
+                    "Could not find any compatible probe in provided data set"
+                )),
             ),
             // Garbage data.
             (

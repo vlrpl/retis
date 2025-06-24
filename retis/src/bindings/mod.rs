@@ -64,6 +64,7 @@ pub(crate) mod kernel_exec_tp_uapi;
 pub(crate) mod kernel_upcall_ret_uapi;
 pub(crate) mod kernel_upcall_tp_uapi;
 
+pub(crate) mod kernel_flow_tbl_lookup_ret_uapi;
 pub(crate) mod ovs_common_uapi;
 pub(crate) mod ovs_operation_uapi;
 pub(crate) mod user_recv_upcall_uapi;
@@ -73,4 +74,5 @@ use events_uapi::retis_log_event;
 
 unsafe impl plain::Plain for retis_log_event {}
 
+pub(crate) mod meta_filter_uapi;
 pub(crate) mod packet_filter_uapi;
