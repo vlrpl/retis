@@ -3,42 +3,13 @@ name: Daily check for new commits in main
 on:
   # Every day at 01:32 AM UTC.
   schedule:
-    - cron: "32 01 * * *"
+    - cron: "25 19 * * *"
+
+  workflow_dispatch:
 
 jobs:
-  daily-change-check:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check for new commits in main and trigger actions
-        run: |
-          if [ -z "$(git log -n1 --since=yesterday --oneline)" ]; then
-              exit 0
-          fi
-          gh workflow run build_push_image.yaml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   stale-check:
     runs-on: ubuntu-latest
-    env:
-      AUTO_STALE_THRESHOLD: 200
-      AUTO_CLOSE_THRESHOLD: 60
-      AUTO_STALE_MSG: |
-        This item has been automatically marked as stale due to ${{ env.AUTO_STALE_THRESHOLD }} days of inactivity.
-        If this remains inactive for an additional ${{ env.AUTO_CLOSE_THRESHOLD }} days, it will be automatically closed.
-        In case this was incorrectly marked as stale, please, remove the `stale` label, and do one or more of the following:
-          - Add it to a milestone, if applicable
-          - Label it as `NoStale`
-          - Leave a comment requesting a review
-
-          If you do not have sufficient permissions to complete any of the previous steps, feel free to reach out to the maintainers.
-          AUTO_CLOSE_MSG: |
-            The item has been automatically closed for inactivity.
-            If this was not intended, please, reopen the item and follow the instructions included in the stale warning.
     steps:
       - uses: actions/stale@v9
         with:
@@ -52,7 +23,28 @@ jobs:
           # Override the default stale/close (60d/7d) inactivity timeouts
           days-before-stale: ${{ env.AUTO_STALE_THRESHOLD }}
           days-before-close: ${{ env.AUTO_CLOSE_THRESHOLD }}
-          stale-pr-message: ${{ env.AUTO_STALE_MSG }}
-          stale-issue-message: ${{ env.AUTO_STALE_MSG }}
+          # Given environment variables cannot be referenced in the same map (and there's no apparent way to discriminate between
+          # PR and issues), use a custom + common part in the stale messages.
+          stale-pr-message: |
+            This PR has been automatically marked as stale due to ${{ env.AUTO_STALE_THRESHOLD }} days of inactivity.
+            If this remains inactive for an additional ${{ env.AUTO_CLOSE_THRESHOLD }} days, it will be automatically closed.
+            ${{ env.AUTO_STALE_COMMON }}
+          stale-issue-message: |
+            This issue has been automatically marked as stale due to ${{ env.AUTO_STALE_THRESHOLD }} days of inactivity.
+            If this remains inactive for an additional ${{ env.AUTO_CLOSE_THRESHOLD }} days, it will be automatically closed.
+            ${{ env.AUTO_STALE_COMMON }}
           close-pr-message: ${{ env.AUTO_CLOSE_MSG }}
           close-issue-message: ${{ env.AUTO_CLOSE_MSG }}
+        env:
+          AUTO_STALE_THRESHOLD: 0
+          AUTO_CLOSE_THRESHOLD: 1
+          AUTO_STALE_COMMON: |
+            In case this was incorrectly marked as stale, please, remove the `stale` label, and do one or more of the following:
+              - Add it to a milestone, if applicable
+              - Label it as `NoStale`
+              - Leave a comment requesting a review
+
+            If you do not have sufficient permissions to complete any of the previous steps, feel free to reach out to the maintainers.
+          AUTO_CLOSE_MSG: |
+            The item has been automatically closed for inactivity.
+            If this was not intended, please, reopen the item and follow the instructions included in the stale warning.
