@@ -4,24 +4,9 @@ on:
   # Every day at 01:32 AM UTC.
   schedule:
     - cron: "32 01 * * *"
+  workflow_dispatch:
 
 jobs:
-  daily-change-check:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check for new commits in main and trigger actions
-        run: |
-          if [ -z "$(git log -n1 --since=yesterday --oneline)" ]; then
-              exit 0
-          fi
-          gh workflow run build_push_image.yaml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   stale-check:
     runs-on: ubuntu-latest
     steps:
@@ -46,8 +31,8 @@ jobs:
           close-pr-message: ${{ env.AUTO_CLOSE_MSG }}
           close-issue-message: ${{ env.AUTO_CLOSE_MSG }}
         env:
-          AUTO_STALE_THRESHOLD: 365
-          AUTO_CLOSE_THRESHOLD: 30
+          AUTO_STALE_THRESHOLD: 0
+          AUTO_CLOSE_THRESHOLD: 0
           AUTO_STALE_COMMON: |
             In case this was incorrectly marked as stale, please, remove the `stale` label (or simply add a comment), and add it
             to a milestone, if applicable.
