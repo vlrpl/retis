@@ -82,8 +82,7 @@ struct tracking_info *skb_tracking_info_by_skb(struct sk_buff *skb)
 
 static __always_inline int track_skb_start(struct retis_context *ctx)
 {
-	bool inv_head = false, no_tracking = false, free = false,
-		deferred_update = false;
+	bool inv_head = false, no_tracking = false, deferred_update = false;
 	struct tracking_info *ti = NULL, new;
 	struct tracking_config *cfg;
 	u64 head, ksym = ctx->ksym;
@@ -103,7 +102,6 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 	if (cfg) {
 		inv_head = cfg->inv_head;
 		no_tracking = cfg->no_tracking;
-		free = cfg->free;
 	}
 
 	head = (u64)BPF_CORE_READ(skb, head);
@@ -161,22 +159,16 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 
 	/* If the skb gets tracked but the stack_base doesn't match, it
 	 * may mean that a packet got queued and handled in a
-	 * different context in terms of stack.  cfg->free is an
-	 * exception as we want to keep the old reference and consume
-	 * it to delete the original stack_id entry in the case of
-	 * deallocation happening in different contexts (e.g. deferred
-	 * deallocation).
+	 * different context in terms of stack.
 	 */
-	if (!free) {
-		if (ti->stack_ref != ctx->stack_base)
-			ti->stack_ref = ctx->stack_base;
+	if (ti->stack_ref != ctx->stack_base)
+		ti->stack_ref = ctx->stack_base;
 
-		if (!track_stack_start(ctx->stack_base,
-				       inv_head
-				       ? (u64)skb
-				       : (u64)head))
-			log_error("While tracking stack. Unable to update the entry");
-	}
+	if (!track_stack_update(ctx->stack_base,
+			       inv_head
+			       ? (u64)skb
+			       : (u64)head))
+		log_error("While tracking stack. Unable to update the entry");
 
 	if (deferred_update)
 		bpf_map_update_elem(&tracking_map, &head, ti, BPF_NOEXIST);
@@ -201,7 +193,7 @@ static __always_inline int track_skb_end(struct retis_context *ctx)
 	if (!cfg)
 		return 0;
 
-	/* We only supports free functions below */
+	/* We only supports   functions below */
 	if (!cfg->free)
 		return 0;
 
@@ -217,14 +209,14 @@ static __always_inline int track_skb_end(struct retis_context *ctx)
 		/* See kfree_skb_partial */
 		bool stolen = retis_get_param(ctx, 1, bool);
 
-		/* If the head wasn't stolen in a partial free, it will be freed
+		/* If the head wasn't stolen in a partial  , it will be freed
 		 * later and we'll catch it.
 		 */
 		if (!stolen)
 			return 0;
 	}
 
-	/* Remove the stack tracking entry only if the free is not
+	/* Remove the stack tracking entry only if the   is not
 	 * deferred, otherwise this would be racy requiring some way
 	 * to synchronize the access. In general the following
 	 * assumption and restriction is applied: every probe chain

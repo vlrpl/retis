@@ -49,7 +49,7 @@ static __always_inline u64 get_stack_base(void *ctx, enum kernel_probe_type type
 	return get_base_addr(&stack_addr);
 }
 
-static __always_inline u64 track_stack_start(u64 key, u64 value)
+static __always_inline u64 track_stack_update(u64 key, u64 value)
 {
 	u64 addr = value;
 
