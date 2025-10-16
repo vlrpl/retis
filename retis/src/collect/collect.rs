@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use log::{debug, info, warn};
-use nix::{errno::Errno, mount::*, unistd::Uid};
+use nix::{errno::Errno, mount::*, sys::utsname::uname, unistd::Uid};
 
 use super::{
     cli::Collect,
@@ -349,6 +349,11 @@ impl Collectors {
                     .unwrap_or("unspec")
                     .to_string(),
                 clock_monotonic_offset: self.monotonic_offset,
+                kernel_version: uname()
+                    .map_err(|e| anyhow!("Failed to get kernel version information: {e}"))?
+                    .release()
+                    .to_string_lossy()
+                    .into_owned(),
             });
             Ok(())
         })
