@@ -80,17 +80,20 @@ struct tracking_info *skb_tracking_info_by_skb(struct sk_buff *skb)
 	return ti;
 }
 
-static __always_inline int track_skb_start(struct retis_context *ctx)
+static __always_inline u64 *track_skb_start(struct retis_context *ctx,
+					    bool ftrace)
 {
 	bool inv_head = false, no_tracking = false, deferred_update = false;
+	bool in_window = false;
 	struct tracking_info *ti = NULL, new;
 	struct tracking_config *cfg;
 	u64 head, ksym = ctx->ksym;
+	u64 *cur_ref;
 	struct sk_buff *skb;
 
 	skb = retis_get_sk_buff(ctx);
 	if (!skb)
-		return 0;
+		return NULL;
 
 	/* Try to retrieve the tracking configuration for this symbol. Only
 	 * specific ones will be found while we want to track skb in all
@@ -106,7 +109,7 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 
 	head = (u64)BPF_CORE_READ(skb, head);
 	if (!head)
-		return 0;
+		return NULL;
 
 	ti = bpf_map_lookup_elem(&tracking_map, &head);
 
@@ -136,13 +139,13 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 		 * there.
 		 */
 		if (ctx->probe_type == KERNEL_PROBE_KRETPROBE)
-			return 0;
+			return NULL;
 
 		/* Tracking info doesn't exist and we don't want to add one,
 		 * nothing more we can do here.
 		 */
 		if (no_tracking)
-			return 0;
+			return NULL;
 
 		ti = &new;
 		ti->timestamp = ctx->timestamp;
@@ -164,10 +167,16 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 	if (ti->stack_ref != ctx->stack_base)
 		ti->stack_ref = ctx->stack_base;
 
-	if (!track_stack_update(ctx->stack_base,
-			       inv_head
-			       ? (u64)skb
-			       : (u64)head))
+	/* Check if we are already inside an ftrace window before updating the
+	 * stack entry, as track_stack_update() will overwrite the old value.
+	 */
+	cur_ref = stack_get_skb_ref(ctx->stack_base);
+	if (cur_ref)
+		in_window = !!(*cur_ref & FTRACE_WINDOW);
+
+	u64 *ref = track_stack_update(ctx->stack_base,
+				      inv_head ? (u64)skb : (u64)head);
+	if (!ref)
 		log_error("While tracking stack. Unable to update the entry");
 
 	if (deferred_update)
@@ -179,7 +188,15 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 	if (inv_head)
 		bpf_map_update_elem(&tracking_map, (u64 *)&skb, ti, BPF_NOEXIST);
 
-	return 0;
+	/* Tag the stack entry as part of an ftrace window if we are already
+	 * inside one, or if the probe itself opened one (kprobe with ftrace
+	 * option set).
+	 */
+	if (ref && (in_window || (ftrace &&
+				  ctx->probe_type == KERNEL_PROBE_KPROBE)))
+		*ref |= FTRACE_WINDOW;
+
+	return ref;
 }
 
 static __always_inline int track_skb_end(struct retis_context *ctx)

@@ -34,7 +34,10 @@ use crate::{
         inspect::check::collection_prerequisites,
         kernel::Symbol,
         probe::{
-            kernel::{probe_stack::ProbeStack, utils::probe_from_cli},
+            kernel::{
+                probe_stack::ProbeStack,
+                utils::{parse_cli_probe, probe_from_cli},
+            },
             *,
         },
         tracking::{
@@ -397,20 +400,38 @@ impl Collectors {
                 .try_for_each(|p| self.probes.builder_mut()?.register_probe(p))?;
         }
 
+        // Cross probe check for option eligible to bypass filtering
+        let skip_filter = collect.probes.iter().any(|p| {
+            parse_cli_probe(p)
+                .map(|(_, _, opts)| opts.contains(&ProbeOption::Ftrace))
+                .unwrap_or(false)
+        });
+
         // Setup user defined probes.
-        let filter = |symbol: &Symbol| {
-            // Skip probes not being compatible with the loaded collectors.
-            let ok = self.known_kernel_types.iter().any(|t| {
+        let filter = |symbol: &Symbol, options: &HashSet<ProbeOption>| -> Result<bool> {
+            let has_known_type = self.known_kernel_types.iter().any(|t| {
                 symbol
                     .parameter_offset(t)
                     .is_ok_and(|offset| offset.is_some())
             });
-            if !ok {
+
+            if options.contains(&ProbeOption::Ftrace) && !has_known_type {
+                bail!("ftrace option is invalid for '{symbol}': no known type parameter");
+            }
+
+            // Allow inner probes on functions without known types.
+            if skip_filter {
+                return Ok(true);
+            }
+
+            // Skip probes not being compatible with the loaded collectors.
+            if !has_known_type {
                 info!(
                     "No probe was attached to {symbol} as no collector could retrieve data from it"
                 );
             }
-            ok
+
+            Ok(has_known_type)
         };
         collect.probes.iter().try_for_each(|p| -> Result<()> {
             probe_from_cli(p, filter)?

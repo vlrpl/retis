@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -6,7 +6,11 @@ use clap::Parser;
 use crate::{
     cli::*,
     collect::collector::get_known_types,
-    core::{inspect::init_inspector, kernel::Symbol, probe::kernel::utils::probe_from_cli},
+    core::{
+        inspect::init_inspector,
+        kernel::Symbol,
+        probe::{kernel::utils::probe_from_cli, ProbeOption},
+    },
 };
 
 #[derive(Parser, Debug, Default)]
@@ -59,12 +63,12 @@ impl SubCommandParserRunner for Inspect {
 
 fn inspect_probe(probe: &str, known_types: &[&str]) -> Result<()> {
     // Only display probes compatible with the collectors.
-    let filter = |symbol: &Symbol| {
-        known_types.iter().any(|t| {
+    let filter = |symbol: &Symbol, _: &HashSet<ProbeOption>| -> Result<bool> {
+        Ok(known_types.iter().any(|t| {
             symbol
                 .parameter_offset(t)
                 .is_ok_and(|offset| offset.is_some())
-        })
+        }))
     };
 
     // Get & list probes.

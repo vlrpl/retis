@@ -73,11 +73,15 @@ pub(crate) fn parse_cli_probe(input: &str) -> Result<(CliProbeType, &str, HashSe
 /// probe representation (`Probe`).
 pub(crate) fn probe_from_cli<F>(probe: &str, filter: F) -> Result<Vec<Probe>>
 where
-    F: Fn(&Symbol) -> bool,
+    F: Fn(&Symbol, &HashSet<ProbeOption>) -> Result<bool>,
 {
     use CliProbeType::*;
 
     let (r#type, target, options) = parse_cli_probe(probe)?;
+
+    if options.contains(&ProbeOption::Ftrace) && !matches!(r#type, Kprobe) {
+        bail!("The 'ftrace' option is only available for kprobes");
+    }
 
     // Convert the target to a list of matching ones for probe types
     // supporting it.
@@ -86,15 +90,29 @@ where
         RawTracepoint => matching_events_to_symbols(target)?,
     };
 
+    // ftrace cannot be applied to wildcards matching multiple symbols.
+    if options.contains(&ProbeOption::Ftrace) && symbols.len() > 1 {
+        bail!("The 'ftrace' option cannot be used with wildcards");
+    }
+
     let mut probes = Vec::new();
     for symbol in symbols.drain(..) {
         // Check if the symbol matches the filter.
-        if !filter(&symbol) {
+        if !filter(&symbol, &options)? {
             continue;
         }
 
         let mut probe = match r#type {
-            Kprobe => Probe::kprobe(symbol)?,
+            Kprobe => {
+                let p = Probe::kprobe(symbol.clone())?;
+                // Paired kretprobe to close the ftrace window.
+                if options.contains(&ProbeOption::Ftrace) {
+                    let mut kret = Probe::kretprobe(symbol)?;
+                    kret.set_option(ProbeOption::Ftrace)?;
+                    probes.push(kret);
+                }
+                p
+            }
             Kretprobe => Probe::kretprobe(symbol)?,
             RawTracepoint => Probe::raw_tracepoint(symbol)?,
         };
@@ -103,7 +121,7 @@ where
             .iter()
             .try_for_each(|o| probe.set_option(o.clone()))?;
 
-        probes.push(probe)
+        probes.push(probe);
     }
 
     Ok(probes)
@@ -111,9 +129,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
+    use anyhow::Result;
+
+    use crate::core::probe::ProbeOption;
+
     #[test]
     fn probe_from_cli() {
-        let filter = |_: &_| true;
+        let filter = |_: &_, _: &HashSet<ProbeOption>| -> Result<bool> { Ok(true) };
 
         // Valid probes.
         assert!(super::probe_from_cli("consume_skb", filter).is_ok());
