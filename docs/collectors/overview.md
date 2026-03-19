@@ -48,6 +48,19 @@ This tracking information, which is basically a unique "id", can be used at
 post-processing time to reconstruct in-kernel packets flow using the `sort`
 post-processing command.
 
+When a probe is configured with the `ftrace` option (see `retis collect --help`),
+it opens a tracking window for the duration of the probed function call. The
+tracking context is established immediately at entry and tagged so that inner
+probes can find it. Inner probes on functions that do not take any known type as
+a parameter can then emit tracking events by inheriting that context; the skb
+address in those events will be `0` since no known type is directly available at
+the inner probe site.
+
+The `ftrace` option can be used on multiple probes simultaneously. However,
+ftrace-enabled probes must not be nested (i.e. one ftrace probe must not be
+called from within the tracking window of another). If they are, the behavior is
+undefined.
+
 The `skb-tracking` collector produces the
 [skb-tracking](../events/skb_tracking.md) event section.
 
