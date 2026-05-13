@@ -12,14 +12,8 @@
 
 const volatile unsigned int THREAD_SIZE;
 
-/* Bits used to tag entries in stack_tracking_map during an ftrace window.
- *
- * FTRACE_SENTINEL: window is open but not enabled (used for non skb-aware).
- * FTRACE_WINDOW:   window is open and enabled.
- */
-#define FTRACE_SENTINEL 1ULL
+/* Bit used to tag entries in stack_tracking_map during an ftrace window. */
 #define FTRACE_WINDOW   2ULL
-#define FTRACE_MASK     (FTRACE_SENTINEL | FTRACE_WINDOW)
 
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);

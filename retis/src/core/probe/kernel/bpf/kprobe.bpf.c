@@ -54,7 +54,7 @@ int probe_kprobe(struct pt_regs *ctx)
 			return -1;
 
 		/* When ftrace is enabled, also run chain() on the kprobe side so
-		 * that the ftrace sentinel/window can be set up on function entry.
+		 * that the ftrace window can be set up on function entry.
 		 */
 		cfg = bpf_map_lookup_elem(&config_map, &context.ksym);
 		if (!cfg || !cfg->ftrace)

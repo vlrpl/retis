@@ -31,7 +31,7 @@ use crate::{
             meta::filter::FilterMeta,
             packets::filter::FilterPacket,
         },
-        inspect::check::collection_prerequisites,
+        inspect::{check::collection_prerequisites, inspector},
         kernel::Symbol,
         probe::{
             kernel::{
@@ -400,15 +400,35 @@ impl Collectors {
                 .try_for_each(|p| self.probes.builder_mut()?.register_probe(p))?;
         }
 
-        // Cross probe check for option eligible to bypass filtering
-        let mut skip_filter = false;
-        for p in &collect.probes {
-            let (_, _, options) = parse_cli_probe(p)?;
-            if options.contains(&ProbeOption::Ftrace) {
-                skip_filter = true;
-                break;
-            }
-        }
+       // Cross probe check for option eligible to bypass filtering, and warn
+         // about ftrace being unused for functions without known types.
+         let mut skip_filter = false;
+         for p in &collect.probes {
+             let (_, target, options) = parse_cli_probe(p)?;
+             if !options.contains(&ProbeOption::Ftrace) {
+                 continue;
+             }
+             skip_filter = true;
+             let funcs = match inspector()?.kernel.matching_functions(target) {
+                 Ok(funcs) => funcs,
+                 Err(_) => continue,
+             };
+             for func in funcs {
+                 let Ok(sym) = Symbol::from_name(&func) else {
+                     continue;
+                 };
+                 let has_known_type = self.known_kernel_types.iter().any(|t| {
+                     sym.parameter_offset(t)
+                         .is_ok_and(|offset| offset.is_some())
+                 });
+                 if !has_known_type {
+                     warn!(
+                         "ftrace option is unused for '{}': no known type parameter",
+                         func
+                     );
+                 }
+             }
+         }
 
         // Setup user defined probes.
         let filter = |symbol: &Symbol| {
