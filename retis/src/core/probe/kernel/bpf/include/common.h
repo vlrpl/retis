@@ -346,8 +346,7 @@ static __always_inline int chain(struct retis_context *ctx)
 	 */
 	if (RETIS_TRACKABLE(ctx)) {
 		cur_ref = stack_get_skb_ref(ctx->stack_base);
-		in_window = cur_ref &&
-			(*cur_ref & (FTRACE_SENTINEL | FTRACE_WINDOW));
+		in_window = cur_ref && (*cur_ref & FTRACE_MASK);
 		ref = track_skb_start(ctx);
 		if (ref && (in_window || (cfg->ftrace &&
 			    ctx->probe_type == KERNEL_PROBE_KPROBE)))
@@ -362,8 +361,7 @@ static __always_inline int chain(struct retis_context *ctx)
 		 */
 		track_stack_end(ctx->stack_base);
 	} else if (cfg->ftrace && ctx->probe_type == KERNEL_PROBE_KPROBE) {
-		track_stack_update(ctx->stack_base, FTRACE_SENTINEL,
-				   BPF_ANY);
+		track_stack_update(ctx->stack_base, FTRACE_SENTINEL);
 	}
 
 	/* Shortcut when there are no hooks (e.g. tracking-only probe); no need
@@ -451,8 +449,8 @@ exit:
 	 */
 	if (cfg->ftrace && ctx->probe_type == KERNEL_PROBE_KRETPROBE) {
 		ref = stack_get_skb_ref(ctx->stack_base);
-		if (ref && (*ref & (FTRACE_SENTINEL | FTRACE_WINDOW)))
-			*ref &= ~(FTRACE_SENTINEL | FTRACE_WINDOW);
+		if (ref && (*ref & FTRACE_MASK))
+			*ref &= ~FTRACE_MASK;
 	}
 
 	return 0;

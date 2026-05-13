@@ -98,16 +98,11 @@ where
         }
 
         let mut probe = match r#type {
-            Kprobe => {
-                let p = Probe::kprobe(symbol.clone())?;
-                // Paired kretprobe to close the ftrace window.
-                if options.contains(&ProbeOption::Ftrace) {
-                    let mut kret = Probe::kretprobe(symbol)?;
-                    kret.set_option(ProbeOption::Ftrace)?;
-                    probes.push(kret);
-                }
-                p
-            }
+            // Let kretprobe handle the implicit entry side; unlike plain
+            // kretprobes, the ftrace option makes the entry side process the
+            // packet normally.
+            Kprobe if options.contains(&ProbeOption::Ftrace) => Probe::kretprobe(symbol)?,
+            Kprobe => Probe::kprobe(symbol)?,
             Kretprobe => Probe::kretprobe(symbol)?,
             RawTracepoint => Probe::raw_tracepoint(symbol)?,
         };

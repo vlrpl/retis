@@ -24,7 +24,7 @@ DEFINE_HOOK(RETIS_ALL_FILTERS,
 		refp = stack_get_skb_ref(ctx->stack_base);
 		if (!refp || !(*refp & FTRACE_WINDOW))
 			return 0;
-		ref = *refp & ~(FTRACE_SENTINEL | FTRACE_WINDOW);
+		ref = *refp & ~FTRACE_MASK;
 		ti = skb_tracking_info(&ref);
 	}
 

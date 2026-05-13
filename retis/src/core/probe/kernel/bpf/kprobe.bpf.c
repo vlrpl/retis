@@ -46,12 +46,19 @@ int probe_kprobe(struct pt_regs *ctx)
 		context.ksym = kprobe_get_func_ip(ctx);
 
 	if (kretprobe) {
+		struct retis_probe_config *cfg;
+
 		/* Store the current context and let the kretprobe run the hooks. */
 		if (bpf_map_update_elem(&kretprobe_context, &context.stack_base, &context,
 					BPF_NOEXIST))
 			return -1;
 
-		return 0;
+		/* When ftrace is enabled, also run chain() on the kprobe side so
+		 * that the ftrace sentinel/window can be set up on function entry.
+		 */
+		cfg = bpf_map_lookup_elem(&config_map, &context.ksym);
+		if (!cfg || !cfg->ftrace)
+			return 0;
 	}
 
 	return chain(&context);

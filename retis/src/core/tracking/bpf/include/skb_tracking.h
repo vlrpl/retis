@@ -164,9 +164,7 @@ static __always_inline u64 *track_skb_start(struct retis_context *ctx)
 	if (ti->stack_ref != ctx->stack_base)
 		ti->stack_ref = ctx->stack_base;
 
-	u64 *ref = track_stack_update(ctx->stack_base,
-				      inv_head ? (u64)skb : (u64)head,
-				      BPF_ANY);
+	u64 *ref = track_stack_update(ctx->stack_base, inv_head ? (u64)skb : (u64)head);
 	if (!ref)
 		log_error("While tracking stack. Unable to update the entry");
 

@@ -19,6 +19,7 @@ const volatile unsigned int THREAD_SIZE;
  */
 #define FTRACE_SENTINEL 1ULL
 #define FTRACE_WINDOW   2ULL
+#define FTRACE_MASK     (FTRACE_SENTINEL | FTRACE_WINDOW)
 
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -71,11 +72,11 @@ static __always_inline u64 get_stack_base(void *ctx, enum kernel_probe_type type
 	return get_base_addr(&stack_addr);
 }
 
-static __always_inline u64 *track_stack_update(u64 key, u64 value, u64 flags)
+static __always_inline u64 *track_stack_update(u64 key, u64 value)
 {
 	u64 addr = value;
 
-	if (!bpf_map_update_elem(&stack_tracking_map, &key, &addr, flags))
+	if (!bpf_map_update_elem(&stack_tracking_map, &key, &addr, BPF_ANY))
 		return bpf_map_lookup_elem(&stack_tracking_map, &key);
 
 	return NULL;
