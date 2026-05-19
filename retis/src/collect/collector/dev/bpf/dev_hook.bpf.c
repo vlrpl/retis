@@ -34,6 +34,7 @@ DEFINE_HOOK_RAW(
 	if (!dev)
 		return 0;
 
+
 	ifindex = BPF_CORE_READ(dev, ifindex);
 	if (!ifindex)
 		return 0;
