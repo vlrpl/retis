@@ -204,6 +204,7 @@ pytest: pytest-deps
 define analyzer_tmpl
   $(1): CARGO_CMD_OPTS ?= $(if $(filter 1,$(RA)),--message-format=json --all-targets --keep-going,)
   $(1): PRINT +=$(if $(filter 1,$(RA)),>/dev/null,)
+  $(if $(VERBOSITY),$(if $(filter 1,$(RA)),.SILENT: $(1),),)
   $(1):
 	$$(call build,$$(@) $(if $(VERBOSITY),$(if $(filter 1,$(RA)),--quiet,),--quiet), running $$@)
 endef
