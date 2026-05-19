@@ -159,7 +159,7 @@ endif
 
 functional-tests:
 	for script in tests/next/*.sh; do \
-		[ "$$LIST_TESTS" == "1" ] && echo "$$script:"; \
+		[ "$$LIST_TESTS" = "1" ] && echo "$$script:"; \
 		$$script; \
 	done
 
