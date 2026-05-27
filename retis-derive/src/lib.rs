@@ -68,7 +68,7 @@ pub fn event_type(
 ) -> proc_macro::TokenStream {
     let input: Item = parse_macro_input!(item);
     let props = item_get_props(&input);
-    let mut pyclass_args = Vec::new();
+    let mut pyclass_args = vec![quote!(from_py_object)];
     let mut derives = vec![
         quote!(Clone),
         quote!(Debug),
@@ -98,7 +98,7 @@ pub fn event_type(
         #[cfg_attr(feature = "python", pyo3::pymethods)]
         #[cfg(feature = "python")]
         impl #ident {
-            pub(crate) fn to_dict(&self, py: pyo3::Python<'_>) -> pyo3::PyObject {
+            pub(crate) fn to_dict(&self, py: pyo3::Python<'_>) -> pyo3::Py<pyo3::PyAny> {
                 crate::python::to_pyobject(&serde_json::json!(self), py)
             }
 

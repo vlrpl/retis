@@ -99,7 +99,7 @@ impl PyEvent {
     ///
     /// Returns a dictionary with all key<>data stored (recursively) in the
     /// event, eg. `e.to_dict()['skb']['dev']`.
-    fn to_dict(&self, py: Python<'_>) -> PyObject {
+    fn to_dict(&self, py: Python<'_>) -> Py<PyAny> {
         self.0.borrow(py).to_dict(py)
     }
 
@@ -111,7 +111,7 @@ impl PyEvent {
             &CString::new("[v for v in dir(event) if getattr(event,v) and not callable(getattr(event,v)) and not v.startswith('__')]")?,
             Some(&globals),
             None,
-        )?.downcast_into()?.unbind())
+        )?.cast_into()?.unbind())
     }
 }
 
@@ -395,8 +395,8 @@ impl PyEventFile {
     }
 }
 
-/// Converts a serde_json::Value to a PyObject.
-pub(crate) fn to_pyobject(val: &serde_json::Value, py: Python<'_>) -> PyObject {
+/// Converts a serde_json::Value to a Py<PyAny>.
+pub(crate) fn to_pyobject(val: &serde_json::Value, py: Python<'_>) -> Py<PyAny> {
     use serde_json::Value;
     match val {
         Value::Null => py.None(),
