@@ -19,7 +19,7 @@ EOF
 	$retis collect -o -c skb,skb-tracking,dev,ns \
 		-f "icmp and host 10.0.255.1" \
 		-p net:netif_rx \
-		--cmd "ip netns exec ns0 ping -c1 10.0.255.1; sleep 0.1"
+		--cmd "ip netns exec ns0 ping -c1 10.0.255.1; sleep 1"
 
 	cat >test.py <<EOF
 from helpers import assert_events_present
