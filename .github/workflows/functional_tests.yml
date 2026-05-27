@@ -21,8 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: "Fedora 43 (x86_64)"
-            distro: x86_64-f43
+          - name: "Fedora 44 (x86_64)"
+            distro: x86_64-f44
             test_extra_args: "--ovs-track"
             cargo_cmd_opts: ""
           - name: "Fedora Rawhide (x86_64)"
