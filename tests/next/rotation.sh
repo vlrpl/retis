@@ -7,8 +7,9 @@ rotation_by_size() {
 
 	ip netns exec ns1 socat TCP-LISTEN:80 /dev/null &
 	$retis collect -o --out-rotate 1MB \
+		--stop-after 8000 \
 		-f "host 10.0.42.1" \
-		--cmd "head -c10M /dev/zero | ip netns exec ns0 socat - TCP:10.0.42.2:80; sleep 1"
+		--cmd "ip netns exec ns0 socat /dev/zero TCP:10.0.42.2:80"
 
 	# Rotation file names should be used.
 	[ ! -f retis.data ]
