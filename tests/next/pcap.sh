@@ -6,7 +6,7 @@ pcap_tcp_cc() {
 	two_ns
 
 	ip netns exec ns1 socat TCP-LISTEN:80 /dev/null &
-	$retis collect -o \
+	$retis collect -c skb -o \
 		-f "tcp port 80 or arp" \
 		-p net:netif_rx -p net:net_dev_start_xmit \
 		--cmd "ip netns exec ns0 socat - TCP:10.0.42.2:80"

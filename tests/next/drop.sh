@@ -5,6 +5,9 @@ source $(dirname $0)/include/helpers.sh
 drop_sanity() {
 	two_ns
 
+	# trigger ARP resolution to avoid failures on older kernels
+	ip netns exec ns0 ping -w 1 -c 1 10.0.42.2
+
 	$retis collect -o -c skb-drop,skb,dev -f tcp \
 		--cmd 'ip netns exec ns0 socat -T1 - TCP:10.0.42.2:443'
 
