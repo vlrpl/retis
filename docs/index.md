@@ -250,3 +250,22 @@ chosen by setting the `PAGER` environment variable, or unset by setting
 $ PAGER=more retis sort
 $ NOPAGER=1 retis sort
 ```
+
+## Syntax highlighting
+
+Retis supports syntax highlighting via [bat](https://github.com/sharkdp/bat).
+The syntax definition is provided in `tools/retis.sublime-syntax` and works
+with any bat theme. To install it:
+
+```none
+$ mkdir -p ~/.config/bat/syntaxes
+$ cp tools/retis.sublime-syntax ~/.config/bat/syntaxes/
+$ bat cache --build
+```
+
+Output can then be piped through bat directly:
+
+```none
+$ retis print retis.data | bat --language retis
+```
+
