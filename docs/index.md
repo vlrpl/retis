@@ -269,3 +269,28 @@ Output can then be piped through bat directly:
 $ retis print retis.data | bat --language retis
 ```
 
+## Interactive filtering with fzf
+
+[`iretis.sh`](https://raw.githubusercontent.com/retis-org/retis/main/tools/iretis.sh)
+wraps `retis` and pipes the output into [fzf](https://github.com/junegunn/fzf)
+for interactive multi-event browsing and filtering. Set `COLORS=1` to enable
+syntax highlighting via [bat](https://github.com/sharkdp/bat) at the same time:
+
+```none
+$ COLORS=1 iretis.sh collect ...
+$ COLORS=1 iretis.sh sort retis.data
+$ COLORS=1 iretis.sh print retis.data
+```
+
+`RETIS_BIN` can be set to point to a specific retis binary (default: `retis`
+from `PATH`), which is useful when running a locally built binary or with
+[`retis_in_container.sh`](https://raw.githubusercontent.com/retis-org/retis/main/tools/retis_in_container.sh).
+
+`ERR_LOG` can be set to a file path where retis stderr is captured and printed
+after fzf exits, keeping the fzf interface uncluttered. If set, stderr is also
+saved to the specified file:
+
+```none
+$ ERR_LOG=/tmp/retis-err.log iretis.sh collect ...
+```
+
