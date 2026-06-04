@@ -40,6 +40,8 @@ pub struct RotateWriter {
     inner: BufWriter<File>,
     // Controls how rotation is done.
     policy: Option<RotationPolicy>,
+    // Optional limit to the number of events file.
+    rotate_count: Option<u32>,
     // Target file name for the output. Will be suffixed following the rotation
     // policy rules.
     target: PathBuf,
@@ -58,6 +60,7 @@ impl RotateWriter {
     pub fn new<P: AsRef<Path>>(
         file: P,
         policy: Option<RotationPolicy>,
+        rotate_count: Option<u32>,
         cmdline: &str,
         monotonic_offset: TimeSpec,
     ) -> Result<Self> {
@@ -71,6 +74,7 @@ impl RotateWriter {
         Ok(Self {
             inner,
             policy,
+            rotate_count,
             target: file.as_ref().to_path_buf(),
             index,
             written,
@@ -136,6 +140,45 @@ impl RotateWriter {
         // Create the new file.
         (self.inner, self.written) = Self::new_file(&self.target, &startup)?;
 
+        // Enforce the output files limit, if any.
+        let limit = match self.rotate_count {
+            Some(limit) => limit,
+            None => return Ok(()),
+        };
+
+        // Check if we should enforce the limit yet.
+        if limit > self.index {
+            return Ok(());
+        }
+
+        let mut target = self.target.clone().into_os_string();
+        target.push(format!(".{}", self.index - limit));
+        fs::remove_file(target)
+    }
+
+    // In case we need to tweak the file names once the collection is done.
+    fn files_fixup(&mut self) -> Result<()> {
+        let range = match self.rotate_count {
+            Some(count) if self.index < count => return Ok(()),
+            Some(count) => count,
+            None => return Ok(()),
+        };
+
+        let mut from = self.index - range;
+        let mut to = 0;
+
+        while to < range {
+            let mut file_from = self.target.clone().into_os_string();
+            let mut file_to = file_from.clone();
+            file_from.push(format!(".{from}"));
+            file_to.push(format!(".{to}"));
+
+            fs::rename(&file_from, &file_to)?;
+
+            from += 1;
+            to += 1;
+        }
+
         Ok(())
     }
 }
@@ -170,9 +213,21 @@ impl Drop for RotateWriter {
             return;
         }
 
+        // In case we have a limit on the number of files generated, rename them
+        // so they start at offset 0.
+        if self.policy.is_some() {
+            if let Err(e) = self.files_fixup() {
+                error!("Could not fixup file names: {e}");
+            }
+        }
+
         info!(
-            "Wrote {} event file(s)",
-            if self.policy.is_none() { 1 } else { self.index }
+            "Wrote {} event file(s){}",
+            if self.policy.is_none() { 1 } else { self.index },
+            match self.rotate_count {
+                Some(count) if self.index > count => format!(", kept {count}"),
+                _ => String::new(),
+            },
         );
     }
 }
