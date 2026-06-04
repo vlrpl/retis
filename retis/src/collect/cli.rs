@@ -95,6 +95,7 @@ Examples of meta filters:
     )]
     pub(super) out: Option<PathBuf>,
     #[arg(
+        short = 'r',
         long,
         requires = "out",
         value_name = "LIMIT",
@@ -107,6 +108,7 @@ Events from the same series might end up on different files. If a previous colle
     )]
     pub(super) out_rotate: Option<String>,
     #[arg(
+        short = 'R',
         long,
         requires = "out_rotate",
         value_name = "COUNT",
