@@ -134,6 +134,24 @@ impl log::Log for Logger {
     }
 }
 
+/// Set verifier log level on all programs in an open object.
+///
+/// The log level is a bitmask defined in include/linux/bpf_verifier.h:
+///   BPF_LOG_LEVEL1 (1): log each instruction's index and mnemonic, but
+///                        discard logs from successfully explored branches.
+///   BPF_LOG_LEVEL2 (2): additionally log the full register state at every
+///                        instruction, precision tracking details, and
+///                        preserve logs from all explored paths.
+///   BPF_LOG_STATS  (4): emit verification time and per-subprog stack depth.
+///   BPF_LOG_FIXED  (8): use a fixed-size buffer instead of a circular one.
+///
+/// Note that libbpf itself retries a failed load with level 1.
+pub(crate) fn set_libbpf_rs_prog_log_level(open_obj: &mut libbpf_rs::OpenObject) {
+    if log::max_level() == LevelFilter::Trace {
+        open_obj.progs_mut().for_each(|mut p| p.set_log_level(2));
+    }
+}
+
 pub(crate) fn set_libbpf_rs_print_callback(level: LevelFilter) {
     let libbpf_rs_print = |level, msg: String| {
         let msg = msg.trim_end_matches('\n');
