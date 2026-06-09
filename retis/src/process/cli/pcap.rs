@@ -13,10 +13,12 @@ use log::{info, warn};
 use pcap_file::{
     pcapng::{
         blocks::{
-            custom::CustomCopiable,
+            custom::{CustomBlockPayload, CustomPayloadCopiable, CustomUtf8Option},
             enhanced_packet::{EnhancedPacketBlock, EnhancedPacketOption},
-            interface_description::{InterfaceDescriptionBlock, InterfaceDescriptionOption},
-            opt_common::{CommonOption, CustomUtf8Option},
+            interface_description::{
+                InterfaceDescriptionBlock, InterfaceDescriptionOption, InterfaceTsResolution,
+            },
+            opt_common::CommonOption,
             Block,
         },
         PcapNgBlock, PcapNgWriter,
@@ -76,6 +78,15 @@ macro_rules! some_or_return {
 // TODO: Register with IANA?
 const RETIS_PEN: u32 = 70000;
 
+// Custom error used for pcap-file API.
+#[derive(thiserror::Error, Debug)]
+enum SchemaBlockError {
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("i/o error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
 /// Custom block containing the JSON-Schema of events.
 struct SchemaBlock {
     schema: Schema,
@@ -89,31 +100,25 @@ impl SchemaBlock {
     }
 }
 
-impl CustomCopiable<'_> for SchemaBlock {
+impl CustomPayloadCopiable<'_> for SchemaBlock {
     const PEN: u32 = RETIS_PEN;
+
     type FromSliceError = SchemaBlockError;
     type WriteToError = SchemaBlockError;
+
+    fn from_slice(slice: &[u8]) -> Result<Option<Self>, SchemaBlockError> {
+        let schema: Schema = serde_json::from_slice(slice)?;
+        Ok(Some(SchemaBlock { schema }))
+    }
 
     fn write_to<W: Write>(&self, writer: &mut W) -> Result<(), SchemaBlockError> {
         let bytes = serde_json::to_vec(&self.schema)?;
         writer.write_all(&bytes[..])?;
         Ok(())
     }
-
-    fn from_slice(slice: &[u8]) -> Result<Option<Self>, SchemaBlockError> {
-        let schema: Schema = serde_json::from_slice(slice)?;
-        Ok(Some(SchemaBlock { schema }))
-    }
 }
 
-// Custom error used for pcap-file API.
-#[derive(thiserror::Error, Debug)]
-enum SchemaBlockError {
-    #[error("json error: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("i/o error: {0}")]
-    Io(#[from] std::io::Error),
-}
+impl CustomBlockPayload<'_> for SchemaBlock {}
 
 impl EventParser {
     /// Creates a new EventParser from a PcapNgWriter<W: Write>.
@@ -149,7 +154,7 @@ impl EventParser {
                         options: vec![
                             InterfaceDescriptionOption::IfName(iface.into()),
                             InterfaceDescriptionOption::IfDescription(desc.into()),
-                            InterfaceDescriptionOption::IfTsResol(9),
+                            InterfaceDescriptionOption::IfTsResol(InterfaceTsResolution::NANO),
                         ],
                     }
                     .into_block(),
@@ -189,7 +194,11 @@ impl EventParser {
 
         // If we see this iface for the first time, add a description block.
         if !self.wrote_header {
-            v.push(SchemaBlock::new()?.into_custom_block()?.into_block());
+            v.push(
+                SchemaBlock::new()?
+                    .into_custom_block_copiable()?
+                    .into_block(),
+            );
             self.wrote_header = true;
         }
 
@@ -367,7 +376,7 @@ mod tests {
                 vec![
                     SchemaBlock::new()
                         .expect("Failed to create SchemaBlock")
-                        .into_custom_block()
+                        .into_custom_block_copiable()
                         .expect("Failed to convert SchemaBlock into block")
                         .into_block(),
                     Block::InterfaceDescription(InterfaceDescriptionBlock {
@@ -380,7 +389,7 @@ mod tests {
                             InterfaceDescriptionOption::IfDescription(Cow::Owned(
                                 "Fake interface for probe kretprobe/ovs_dp_upcall".to_string(),
                             )),
-                            InterfaceDescriptionOption::IfTsResol(9),
+                            InterfaceDescriptionOption::IfTsResol(InterfaceTsResolution::NANO),
                         ],
                     }),
                     Block::EnhancedPacket(EnhancedPacketBlock {
@@ -441,7 +450,7 @@ mod tests {
                 vec![
                     SchemaBlock::new()
                         .expect("Failed to create SchemaBlock")
-                        .into_custom_block()
+                        .into_custom_block_copiable()
                         .expect("Failed to convert SchemaBlock into block")
                         .into_block(),
                     Block::InterfaceDescription(InterfaceDescriptionBlock {
@@ -454,7 +463,7 @@ mod tests {
                             InterfaceDescriptionOption::IfDescription(Cow::Owned(
                                 "Fake interface for probe raw_tracepoint/net:net_dev_start_xmit".to_string(),
                             )),
-                            InterfaceDescriptionOption::IfTsResol(9),
+                            InterfaceDescriptionOption::IfTsResol(InterfaceTsResolution::NANO),
                         ],
                     }),
                     Block::EnhancedPacket(EnhancedPacketBlock {
@@ -488,7 +497,7 @@ mod tests {
                             InterfaceDescriptionOption::IfDescription(Cow::Owned(
                                 "Fake interface for probe raw_tracepoint/net:netif_receive_skb".to_string(),
                             )),
-                            InterfaceDescriptionOption::IfTsResol(9),
+                            InterfaceDescriptionOption::IfTsResol(InterfaceTsResolution::NANO),
                         ],
                     }),
                     Block::EnhancedPacket(EnhancedPacketBlock {
