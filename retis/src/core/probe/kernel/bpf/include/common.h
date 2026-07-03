@@ -26,6 +26,7 @@ struct kernel_event {
 struct retis_probe_config {
 	struct retis_probe_offsets offsets;
 	u8 stack_trace;
+	u8 ftrace;
 } __binding;
 
 /* Probe configuration; the key is the target symbol address */
@@ -45,35 +46,46 @@ struct {
 	__uint(value_size, 127 * sizeof(u64));
 } stack_map SEC(".maps");
 
-#define RETIS_F_PASS(f, v)			\
-	RETIS_F_##f##_PASS_SH = v,		\
-	RETIS_F_##f##_PASS = 1 << v
 
-/* Defines the bit position for each filter */
-enum {
-	RETIS_F_PASS(PACKET, 0),
-	RETIS_F_PASS(META, 1),
-	RETIS_F_PASS(STACK, 2),
-};
+/* All bits in the mask. */
+#define F_ALL(fmask)	((ctx->flags & (fmask)) == (fmask))
+/* Always true. Used by raw hooks. */
+#define F_ALWAYS	1
 
-/* Filters chain is an and */
-#define F_AND		0
-/* Filters chain is an or */
-#define F_OR		1
+/* OR of AND-groups: each argument is a bitmask that must be fully set (AND),
+ * and the groups are OR'd together. Up to 4 groups are supported.
+ *
+ *   F_GROUPS(A)       ->  F_ALL(A)
+ *   F_GROUPS(A, B)    ->  F_ALL(A) || F_ALL(B)
+ */
+#define _F_GROUPS1(a)		(F_ALL(a))
+#define _F_GROUPS2(a, b)	(F_ALL(a) || F_ALL(b))
+#define _F_GROUPS3(a, b, c)	(F_ALL(a) || F_ALL(b) || F_ALL(c))
+#define _F_GROUPS4(a, b, c, d)	(F_ALL(a) || F_ALL(b) || F_ALL(c) || F_ALL(d))
 
-#define RETIS_ALL_FILTERS	(RETIS_F_PACKET_PASS | RETIS_F_META_PASS)
+#define _F_GROUPS_SEL(_1, _2, _3, _4, N, ...)	N
+#define F_GROUPS(...)						\
+	_F_GROUPS_SEL(__VA_ARGS__,				\
+		      _F_GROUPS4, _F_GROUPS3,			\
+		      _F_GROUPS2, _F_GROUPS1)(__VA_ARGS__)
 
-#define RETIS_TRACKABLE(ctx)	(!(ctx->flags ^ RETIS_ALL_FILTERS))
+#define RETIS_TRACKABLE(ctx)	((ctx->flags & RETIS_ALL_FILTERS) == RETIS_ALL_FILTERS)
 
 /* Helper to define a hook (mostly in collectors) while not having to duplicate
  * the common part everywhere. This also ensure hooks are doing the right thing
  * and should help with maintenance.
  *
+ * fexpr is a boolean expression over ctx->flags, built using the F_ALL()
+ * helper or the F_GROUPS() macro for disjunctions of flag groups:
+ *
+ *   F_GROUPS(flags)      -- all bits in the mask
+ *   F_GROUPS(A, B)       -- all of mask A, or all of mask B
+ *
  * To define a hook in a collector hook, say hook.bpf.c,
  * ```
  * #include <common.h>
  *
- * DEFINE_NAMED_HOOK(hook_name, AND_OR_SEL, FILTER_FLAG1 | FILTER_FLAG2 | ...,
+ * DEFINE_NAMED_HOOK(hook_name, F_GROUPS(RETIS_ALL_FILTERS),
  *	do_something(ctx);
  *	return 0;
  * )
@@ -81,16 +93,14 @@ enum {
  * char __license[] SEC("license") = "GPL";
  * ```
  */
-#define DEFINE_NAMED_HOOK(hook_name, fmode, fflags, statements)			\
+#define DEFINE_NAMED_HOOK(hook_name, fexpr, statements)				\
 	SEC("ext/hook")								\
 	int hook_name(struct retis_context *ctx, struct retis_raw_event *event) \
 	{									\
 		/* Let the verifier be happy */					\
 		if (!ctx || !event)						\
 			return 0;						\
-		if (!((fmode == F_OR) ?						\
-		      (ctx->flags & (fflags)) :				\
-		      ((ctx->flags & (fflags)) == (fflags))))		\
+		if (!(fexpr))							\
 			return 0;						\
 		statements							\
 	}
@@ -98,13 +108,13 @@ enum {
 /* Simple wrapper for DEFINE_NAMED_HOOK() that use file base name as
  * default name.
  */
-#define DEFINE_HOOK(fmode, fflags, statements)				\
-	DEFINE_NAMED_HOOK(__PROG_NAME, fmode, fflags, statements)
+#define DEFINE_HOOK(fexpr, statements)					\
+	DEFINE_NAMED_HOOK(__PROG_NAME, fexpr, statements)
 
 /* Helper that defines a hook that doesn't depend on any filtering
  * result and runs regardless.  Filtering outcome is still available
  * through ctx->flags for actions that need special handling not
- * covered by DEFINE_HOOK([F_AND|F_OR], flags, ...).
+ * covered by DEFINE_HOOK().
  *
  * To define a hook in a collector hook, say hook.bpf.c,
  * ```
@@ -118,8 +128,8 @@ enum {
  * char __license[] SEC("license") = "GPL";
  * ```
  */
-#define DEFINE_HOOK_RAW(statements)				\
-	DEFINE_NAMED_HOOK(__PROG_NAME, F_AND, 0, statements)
+#define DEFINE_HOOK_RAW(statements)					\
+	DEFINE_NAMED_HOOK(__PROG_NAME, F_ALWAYS, statements)
 
 /* Number of hooks installed, used to micro-optimize the call chain */
 const volatile u32 nhooks = 0;
@@ -336,8 +346,9 @@ static __always_inline int chain(struct retis_context *ctx)
 	skb = retis_get_sk_buff(ctx);
 	if (skb)
 		ctx->flags = filter(skb);
-	else if (stack_is_tracked(ctx->stack_base))
-		ctx->flags = RETIS_F_STACK_PASS;
+
+	if (stack_in_window(ctx->stack_base))
+		ctx->flags |= RETIS_F_WINDOW_PASS;
 
 	/* Track the skb. Note that this is done *after* filtering! If no skb is
 	 * available this is a no-op.
@@ -346,9 +357,9 @@ static __always_inline int chain(struct retis_context *ctx)
 	 * logic runs even if later ops fail: we don't want to miss information
 	 * because of non-fatal errors!
 	 */
-	if (RETIS_TRACKABLE(ctx))
-		track_skb_start(ctx);
-	else if (skb)
+	if (RETIS_TRACKABLE(ctx)) {
+		track_skb_start(ctx, cfg->ftrace);
+	} else if (skb) {
 		/* Terminate any potentially existing entry not
 		 * associated with a tracked skb. Blind termination
 		 * approach is supposed to be more performing in the
@@ -357,6 +368,7 @@ static __always_inline int chain(struct retis_context *ctx)
 		 * collection (e.g. skb_tracking stale entry hanging).
 		 */
 		track_stack_end(ctx->stack_base);
+	}
 
 	/* Shortcut when there are no hooks (e.g. tracking-only probe); no need
 	 * to allocate and fill an event to drop it later on.
@@ -435,7 +447,7 @@ exit:
 	 * no-op.
 	 */
 	if (RETIS_TRACKABLE(ctx))
-		track_skb_end(ctx);
+		track_skb_end(ctx, cfg->ftrace);
 
 	return 0;
 }

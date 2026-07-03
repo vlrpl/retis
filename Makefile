@@ -220,7 +220,7 @@ lint-rust: fmt-rust clippy
 
 lint-ebpf:
 	$(call out_console,CHECKPATCH,checking eBPF coding style ...)
-	ignore="SPDX_LICENSE_TAG,FILE_PATH_CHANGES,EMAIL_SUBJECT,VOLATILE,MACRO_WITH_FLOW_CONTROL"; \
+	ignore="SPDX_LICENSE_TAG,FILE_PATH_CHANGES,EMAIL_SUBJECT,VOLATILE,MACRO_WITH_FLOW_CONTROL,MACRO_ARG_UNUSED"; \
 	base_hash=$$(git merge-base $${BASE_COMMIT:-main} HEAD); \
 	COMMIT_RANGE=$$(git rev-list --no-merges --reverse $${base_hash}..HEAD); \
 	for commit in $$COMMIT_RANGE; do \

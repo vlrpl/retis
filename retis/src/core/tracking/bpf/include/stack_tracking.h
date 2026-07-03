@@ -12,6 +12,9 @@
 
 const volatile unsigned int THREAD_SIZE;
 
+/* Bit used to tag entries in stack_tracking_map during an ftrace window. */
+#define FTRACE_WINDOW 1ULL
+
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 8192);
@@ -63,15 +66,11 @@ static __always_inline u64 get_stack_base(void *ctx, enum kernel_probe_type type
 	return get_base_addr(&stack_addr);
 }
 
-static __always_inline u64 track_stack_update(u64 key, u64 value)
+static __always_inline long track_stack_update(u64 key, u64 value)
 {
 	u64 addr = value;
 
-	if (!bpf_map_update_elem(&stack_tracking_map, &key,
-				 &addr, BPF_ANY))
-		return addr;
-
-	return 0;
+	return bpf_map_update_elem(&stack_tracking_map, &key, &addr, BPF_ANY);
 }
 
 static __always_inline long track_stack_end(u64 stack_base)
@@ -79,20 +78,21 @@ static __always_inline long track_stack_end(u64 stack_base)
 	return bpf_map_delete_elem(&stack_tracking_map, &stack_base);
 }
 
-static __always_inline u64 stack_get_skb_ref(u64 stack_base)
+static __always_inline u64 *stack_get_skb_ref(u64 stack_base)
 {
-	u64 *val;
-
-	val = bpf_map_lookup_elem(&stack_tracking_map, &stack_base);
-	if (!val)
-		return 0;
-
-	return *val;
+	return bpf_map_lookup_elem(&stack_tracking_map, &stack_base);
 }
 
-static __always_inline bool stack_is_tracked(u64 stack_base)
+static __always_inline bool stack_in_window(u64 stack_base)
 {
-	return stack_get_skb_ref(stack_base);
+	u64 *cur_ref;
+	bool in_window = false;
+
+	cur_ref = stack_get_skb_ref(stack_base);
+	if (cur_ref)
+		in_window = !!(*cur_ref & FTRACE_WINDOW);
+
+	return in_window;
 }
 
 #endif /* __CORE_STACK_TRACKING__ */
