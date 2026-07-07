@@ -93,8 +93,8 @@ impl StatsProcessor {
     }
 
     fn print(&self) -> Result<()> {
-        for file in self.files.iter() {
-            file.print()?;
+        for (index, file) in self.files.iter().enumerate() {
+            file.print(index)?;
         }
         Ok(())
     }
@@ -177,13 +177,12 @@ impl FileStats {
         println!("Retis cmdline: {}", self.startup.cmdline);
     }
 
-    fn print(&self) -> Result<()> {
-        let idx = self.startup.split_file.as_ref().map(|s| s.id).unwrap_or(0);
-        if idx == 0 {
+    fn print(&self, index: usize) -> Result<()> {
+        if index == 0 {
             self.print_common();
         }
-        if self.startup.split_file.is_some() {
-            println!("\nSplit index: {}", idx);
+        if let Some(sf) = &self.startup.split_file {
+            println!("\nSplit index: {}", sf.id);
         }
 
         if self.n_series > 0 {

@@ -1,6 +1,5 @@
 /// # Writer handling file rotation
 use std::{
-    ffi::OsStr,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::Drop,
@@ -8,7 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use log::{error, info, warn};
+use log::{error, info};
 use nix::sys::utsname::uname;
 
 use crate::{compat::json, file::guess_version, helpers::time::*, *};
@@ -100,19 +99,11 @@ impl RotateWriter {
         self.flush()?;
 
         // Move the file, if needed.
-        if let Some(policy) = &self.policy {
-            match policy {
-                RotationPolicy::Size { .. } => {
-                    let mut target = self.target.clone().into_os_string();
-                    target.push(format!(".{}", self.index));
-
-                    fs::rename(&self.target, &target)?;
-
-                    // The `Size` policy suffix the output file with their index; we
-                    // can reuse the internal index here.
-                    self.index += 1;
-                }
-            }
+        if self.policy.is_some() {
+            let mut target = self.target.clone().into_os_string();
+            target.push(format!(".{}", self.index));
+            fs::rename(&self.target, &target)?;
+            self.index += 1;
         }
 
         Ok(())
@@ -283,18 +274,20 @@ impl RotateReader {
 
         if let Some(startup) = event.startup {
             if let Some(split) = startup.split_file {
-                match split.policy {
-                    RotationPolicy::Size { .. } => {
-                        if path.extension()
-                            == Some(<String as AsRef<OsStr>>::as_ref(&format!("{}", split.id)))
-                        {
-                            path.set_extension("");
-                            return Ok((path, split.id, Some(split.policy)));
-                        } else {
-                            warn!("File extension does not match the rotation policy");
-                        }
+                match path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.parse::<u32>())
+                {
+                    Some(Ok(extension)) => {
+                        path.set_extension("");
+                        return Ok((path, extension, Some(split.policy)));
                     }
-                }
+                    _ => error!(
+                        "{} has an invalid extension (should be a number)",
+                        path.display()
+                    ),
+                };
             }
         }
 
