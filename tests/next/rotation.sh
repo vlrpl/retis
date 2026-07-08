@@ -26,20 +26,20 @@ rotation_by_size() {
 
 	# Check reading rotated events.
 
-	out=$($retis print)
-	echo $out | grep "file id 0"
-	echo $out | grep "file id 1"
-	echo $out | grep "file id 2"
+	$retis print > print
+	grep "file id 0" print
+	grep "file id 1" print
+	grep "file id 2" print
 
-	out=$($retis print retis.data.1)
-	echo $out | grep -v "file id 0"
-	echo $out | grep "file id 1"
-	echo $out | grep -v "file id 2"
+	$retis print retis.data.1 > print
+	grep -v "file id 0" print
+	grep "file id 1" print
+	grep -v "file id 2" print
 
-	out=$($retis print retis.data.1..)
-	echo $out | grep -v "file id 0"
-	echo $out | grep "file id 1"
-	echo $out | grep "file id 2"
+	$retis print retis.data.1.. > print
+	grep -v "file id 0" print
+	grep "file id 1" print
+	grep "file id 2" print
 
 	# Check stats contain all 3 rotation blocks
 	$retis stats > stats
@@ -70,20 +70,20 @@ for e in reader.events():
 	print(e)
 EOF
 
-		out=$($retis python test.py)
-		echo $out | grep "file id 0"
-		echo $out | grep "file id 1"
-		echo $out | grep "file id 2"
+		$retis python test.py > python
+		grep "file id 0" python
+		grep "file id 1" python
+		grep "file id 2" python
 
-		out=$($retis python --input retis.data.1 test.py)
-		echo $out | grep -v "file id 0"
-		echo $out | grep "file id 1"
-		echo $out | grep -v "file id 2"
+		$retis python --input retis.data.1 test.py > python
+		grep -v "file id 0" python
+		grep "file id 1" python
+		grep -v "file id 2" python
 
-		out=$($retis python --input retis.data.1.. test.py)
-		echo $out | grep -v "file id 0"
-		echo $out | grep "file id 1"
-		echo $out | grep "file id 2"
+		$retis python --input retis.data.1.. test.py > python
+		grep -v "file id 0" python
+		grep "file id 1" python
+		grep "file id 2" python
 	fi
 }
 
