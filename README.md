@@ -4,6 +4,8 @@
 [![Documentation](https://readthedocs.org/projects/retis/badge/?version=stable)](https://retis.readthedocs.io/en/stable/)
 [![License](https://img.shields.io/github/license/retis-org/retis)](LICENSE)
 
+<img src="logo.png" width="400" alt="Retis logo">
+
 Tracing (filtered) packets in the [Linux](https://kernel.org) networking stack,
 using [eBPF](https://ebpf.io) probes and interfacing with control and data paths
 such as [OvS](https://www.openvswitch.org) or [Netfilter](https://netfilter.org).
