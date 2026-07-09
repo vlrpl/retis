@@ -38,7 +38,7 @@ impl KernelVersion {
 
     /// Parse a version string of the `$(uname -r)` form into a KernelVersion.
     pub(crate) fn parse(version: &str) -> Result<Self> {
-        let mut parts = version.split(['.', '+']);
+        let mut parts = version.split(['.', '-', '+']);
 
         let major: u32 = parts
             .next()
@@ -48,18 +48,14 @@ impl KernelVersion {
             .next()
             .ok_or_else(|| anyhow!("Could not get kernel minor version from {version}"))?
             .parse()?;
-        let mut tmp = parts
-            .next()
-            .ok_or_else(|| anyhow!("Could not get kernel patch-build version from {version}"))?
-            .split('-');
-        let patch: u32 = tmp
+        let patch: u32 = parts
             .next()
             .ok_or_else(|| anyhow!("Could not get kernel patch version from {version}"))?
             .parse()?;
 
         // Build can be in any position of the remaining string, e.g:
         // 6.2.0-20-generic or 6.4.12-arch1-1.
-        let build = tmp.find_map(|s| s.parse::<u32>().ok());
+        let build = parts.find_map(|s| s.parse::<u32>().ok());
 
         Ok(KernelVersion {
             major,
