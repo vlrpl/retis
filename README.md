@@ -1,5 +1,9 @@
 # Retis
 
+[![Latest Release](https://img.shields.io/github/v/release/retis-org/retis)](https://github.com/retis-org/retis/releases/latest)
+[![Documentation](https://readthedocs.org/projects/retis/badge/?version=stable)](https://retis.readthedocs.io/en/stable/)
+[![License](https://img.shields.io/github/license/retis-org/retis)](LICENSE)
+
 Tracing (filtered) packets in the [Linux](https://kernel.org) networking stack,
 using [eBPF](https://ebpf.io) probes and interfacing with control and data paths
 such as [OvS](https://www.openvswitch.org) or [Netfilter](https://netfilter.org).
