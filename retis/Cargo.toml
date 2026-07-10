@@ -42,7 +42,7 @@ libbpf-sys = "1.6"
 libc = "0.2"
 log = { version = "0.4", features = ["std"] }
 memoffset = "0.9"
-nix = { version = "0.30", features = ["feature", "mount", "time", "user"] }
+nix = { version = "0.31", features = ["feature", "mount", "time", "user"] }
 once_cell = "1.15"
 ovs-unixctl = { version = "0.1.0" }
 pager = "0.16"
@@ -51,18 +51,18 @@ pcap-file = { git = "https://github.com/courvoif/pcap-file.git", rev = "e60e2f9b
 pest = "2.7"
 pest_derive = "2.7"
 plain = "0.2"
-rbpf = {version = "0.3", optional = true}
+rbpf = {version = "0.4", optional = true}
 regex = "1.7"
 retis-derive = {version = "1.5", path = "../retis-derive"}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0"
 serde_with = "3.0"
 serde_yaml = "0.9"
-signal-hook = "0.3"
+signal-hook = "0.4"
 termcolor = "1.3"
 time = { version = "0.3", features = ["formatting", "macros"] }
 thiserror = "2.0"
-schemars = "0.9"
+schemars = "1.2"
 
 [build-dependencies]
 bindgen = "0.72"
@@ -71,7 +71,7 @@ memmap2 = "0.9"
 
 [dev-dependencies]
 probe = "0.5"
-rbpf = "0.3"
+rbpf = "0.4"
 serial_test = "3.1"
 test-case = "3.2"
 events = {version = "1.5", path = "../retis-events", package="retis-events", features = ["test-events"]}

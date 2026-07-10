@@ -169,7 +169,7 @@ impl FlowEnricher {
                             Some(task) => task,
                         };
 
-                        let ufid_str = format!("ufid:{}", &task.ufid);
+                        let ufid_str = format!("ufid:{}", task.ufid);
                         debug!(
                             "ovs-flow-enricher: Enriching flow {ufid_str}. Pending enrichment tasks {}",
                             registry.queue_len()

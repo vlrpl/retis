@@ -47,7 +47,7 @@ impl EventFmt for PacketEvent {
 /// We don't use #[event_type] as we're implementing serde::Serialize and
 /// serde::Deserialize manually.
 #[derive(Clone, Debug, schemars::JsonSchema)]
-#[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "python", pyclass(from_py_object))]
 pub struct RawPacket(pub Vec<u8>);
 
 impl serde::Serialize for RawPacket {
@@ -766,7 +766,7 @@ impl RawPacket {
                             write!(f, " cookie ")?;
                             for i in 0..datalen {
                                 if let Some(c) = opt.payload().get(i) {
-                                    write!(f, "{c:#02x}")?;
+                                    write!(f, "{c:#04x}")?;
                                 } else {
                                     write!(f, "??")?;
                                 }

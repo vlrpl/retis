@@ -9,7 +9,7 @@ pcap_tcp_cc() {
 	$retis collect -c skb -o \
 		-f "tcp port 80 or arp" \
 		-p net:netif_rx -p net:net_dev_start_xmit \
-		--cmd "ip netns exec ns0 socat - TCP:10.0.42.2:80"
+		--cmd "ip netns exec ns0 socat - TCP:10.0.42.2:80; sleep 1"
 
 	$retis pcap -p tp:net:netif_rx -o retis.pcap
 

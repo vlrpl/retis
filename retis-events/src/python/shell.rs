@@ -27,7 +27,7 @@ pub fn shell_execute(file: EventFile, script: Option<&PathBuf>, args: &[String])
         None => Vec::new(),
     };
 
-    Python::with_gil(|py| -> PyResult<()> {
+    Python::attach(|py| -> PyResult<()> {
         let shell = PyShell::new(py, event_file)?;
         let ret = match script {
             Some(script) => {
