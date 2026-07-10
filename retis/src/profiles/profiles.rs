@@ -298,7 +298,7 @@ impl Profile {
         };
 
         args.iter()
-            .map(|(k, v)| (format!("--{}", &k.replace('_', "-")), v))
+            .map(|(k, v)| (format!("--{}", k.replace('_', "-")), v))
             .for_each(|(k, v)| match v {
                 ArgValue::Single(s) => {
                     result.push(k.into());

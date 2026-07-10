@@ -453,7 +453,7 @@ impl Process {
         // symbol lookup (which happens during event decoding).
         // Given normal number of libraries and the fact looking for notes is likely be done
         // during module initialization it's probably OK not to optimize further.
-        for (_, lib) in self.libs.iter() {
+        for lib in self.libs.values() {
             if let Some(note) = lib.get_note(target)? {
                 return Ok(Some((&lib.path, note)));
             }

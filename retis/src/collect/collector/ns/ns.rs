@@ -54,7 +54,7 @@ impl RawEventSectionFactory for NsEventFactory {
         let raw = parse_single_raw_section::<netns_event>(&raw_sections)?;
 
         event.netns = Some(NetnsEvent {
-            cookie: Some(raw.cookie).filter(|_| self.net_cookie),
+            cookie: self.net_cookie.then_some(raw.cookie),
             inum: raw.inum,
         });
 

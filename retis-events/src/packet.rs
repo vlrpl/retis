@@ -766,7 +766,7 @@ impl RawPacket {
                             write!(f, " cookie ")?;
                             for i in 0..datalen {
                                 if let Some(c) = opt.payload().get(i) {
-                                    write!(f, "{c:#02x}")?;
+                                    write!(f, "{c:#04x}")?;
                                 } else {
                                     write!(f, "??")?;
                                 }
