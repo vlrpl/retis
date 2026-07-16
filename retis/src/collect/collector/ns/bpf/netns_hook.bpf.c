@@ -39,26 +39,19 @@ static __always_inline struct net *get_net_from_skb(struct sk_buff *skb)
 	return NULL;
 }
 
-DEFINE_HOOK_RAW(
+DEFINE_HOOK(F_GROUPS(RETIS_ALL_FILTERS, RETIS_F_WINDOW_PASS),
 	/* Netns cookies are not available on older kernels. */
 	bool get_cookie = bpf_core_field_exists(struct net, net_cookie);
 	struct netns_event *e;
 	struct sk_buff *skb;
 	struct net *net;
-	u64 cookie;
+	u64 cookie = 0;
 	u32 inum;
 
 	skb = retis_get_sk_buff(ctx);
-	if (!skb || !skb_is_tracked(skb))
+	net = skb ? get_net_from_skb(skb) : get_net_from_parms(ctx);
+	if (!net)
 		return 0;
-
-	net = get_net_from_skb(skb);
-	if (!net) {
-		/* Fallback to parameters. */
-		net = get_net_from_parms(ctx);
-		if (!net)
-			return 0;
-	}
 
 	if (get_cookie)
 		cookie = BPF_CORE_READ(net, net_cookie);
