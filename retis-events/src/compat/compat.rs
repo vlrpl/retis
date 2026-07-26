@@ -36,6 +36,7 @@ const FIXUPS: &[&[CompatFixup]] = &[
         Add("startup/cmdline", CompatValue::String("unknown")),
         Move("ct/tcp_state", "ct/proto_state"),
         Move("ct/parent/tcp_state", "ct/parent/proto_state"),
+        Add("skb/field_report", CompatValue::Null),
     ],
 ];
 
@@ -195,6 +196,65 @@ mod tests {
         let req = semver::VersionReq::parse(req)?;
 
         Ok(req.matches(&version))
+    }
+
+    /// Build a minimal skb event JSON with a field_report section.
+    fn skb_event_with_field_report() -> serde_json::Value {
+        serde_json::json!({
+            "skb": {
+                "field_report": {
+                    "fields": [
+                        { "name": "mark", "value": { "u32": { "value": 42 } } }
+                    ]
+                }
+            }
+        })
+    }
+
+    /// Build a minimal skb event JSON without field_report (old format).
+    fn skb_event_without_field_report() -> serde_json::Value {
+        serde_json::json!({
+            "skb": {
+                "meta": { "len": 100 }
+            }
+        })
+    }
+
+    #[test]
+    fn field_report_forward_fixup() {
+        // Forward: presenting a 1.7 event to a V1 (1.6.x) consumer strips field_report.
+        let mut event = skb_event_with_field_report();
+        super::compatibility_fixup(
+            &mut event,
+            super::CompatStrategy::Forward(super::CompatVersion::V1),
+        )
+        .unwrap();
+
+        // field_report must be removed (set to Null) from skb.
+        let field_report = event.get("skb").and_then(|s| s.get("field_report"));
+        assert!(
+            field_report.is_none() || field_report == Some(&serde_json::Value::Null),
+            "field_report should be removed in forward compat, got: {field_report:?}"
+        );
+    }
+
+    #[test]
+    fn field_report_backward_fixup() {
+        // Backward: reading a V1 (1.6.x) event in 1.7 adds field_report as null.
+        let mut event = skb_event_without_field_report();
+        super::compatibility_fixup(
+            &mut event,
+            super::CompatStrategy::Backward(super::CompatVersion::V1),
+        )
+        .unwrap();
+
+        // field_report must be present as null (deserializes as None in Rust).
+        let field_report = event.get("skb").and_then(|s| s.get("field_report"));
+        assert_eq!(
+            field_report,
+            Some(&serde_json::Value::Null),
+            "field_report should be null in backward compat"
+        );
     }
 
     #[test]
