@@ -22,20 +22,20 @@ use crate::core::{
     inspect::{inspector, BtfInfo},
 };
 
-const PTR_BIT: u8 = 1 << 6;
-const SIGN_BIT: u8 = 1 << 7;
+pub(crate) const PTR_BIT: u8 = 1 << 6;
+pub(crate) const SIGN_BIT: u8 = 1 << 7;
 
 #[derive(Clone, Debug, Default)]
-struct LhsNode {
-    member: String,
-    mask: u64,
-    cast: Option<String>,
+pub(crate) struct LhsNode {
+    pub(crate) member: String,
+    pub(crate) mask: u64,
+    pub(crate) cast: Option<String>,
 }
 
-type Lhs = Vec<LhsNode>;
+pub(crate) type Lhs = Vec<LhsNode>;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-enum RelOp {
+pub(crate) enum RelOp {
     Eq,
     Gt,
     Lt,
@@ -58,7 +58,7 @@ impl fmt::Display for RelOp {
     }
 }
 
-enum MetaType {
+pub(crate) enum MetaType {
     Char = 1,
     Short = 2,
     Int = 3,
@@ -75,59 +75,80 @@ struct TargetCtx {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-struct LoadCtx {
+pub(crate) struct LoadCtx {
     // Type of data we're going to load
     // bit 0-4: [char|short|int|long], bit5: reserved, bit6: is_ptr, bit7: sign
-    r#type: u8,
+    pub(crate) r#type: u8,
     // Usually zero.
     // nmemb > 0 is valid iff XlateCtx::r#type == MetaType::Char
-    nmemb: u8,
+    pub(crate) nmemb: u8,
     // Byte offset if bf_size is zero. Bit offset otherwise.
-    offt: u16,
+    pub(crate) offt: u16,
     // Zero for no bitfield.
-    bf_size: u8,
+    pub(crate) bf_size: u8,
     // Mask to apply. Only numbers are supported.
-    mask: u64,
+    pub(crate) mask: u64,
 }
 
 impl LoadCtx {
-    fn is_num(&self) -> bool {
+    pub(crate) fn is_num(&self) -> bool {
         self.is_byte() || self.is_short() || self.is_int() || self.is_long()
     }
 
-    fn is_byte(&self) -> bool {
+    pub(crate) fn is_byte(&self) -> bool {
         self.r#type & 0x1f == MetaType::Char as u8
     }
 
-    fn is_short(&self) -> bool {
+    pub(crate) fn is_short(&self) -> bool {
         self.r#type & 0x1f == MetaType::Short as u8
     }
 
-    fn is_int(&self) -> bool {
+    pub(crate) fn is_int(&self) -> bool {
         self.r#type & 0x1f == MetaType::Int as u8
     }
 
-    fn is_long(&self) -> bool {
+    pub(crate) fn is_long(&self) -> bool {
         self.r#type & 0x1f == MetaType::Long as u8
     }
 
-    fn is_ptr(&self) -> bool {
+    pub(crate) fn is_ptr(&self) -> bool {
         self.r#type & PTR_BIT > 0
     }
 
-    fn is_signed(&self) -> bool {
+    pub(crate) fn is_signed(&self) -> bool {
         self.r#type & SIGN_BIT > 0
     }
 
-    fn is_arr(&self) -> bool {
+    pub(crate) fn is_arr(&self) -> bool {
         self.nmemb > 0
+    }
+
+    /// Returns the size in bytes of the value this LoadCtx describes.
+    #[allow(dead_code)]
+    pub(crate) fn value_size(&self) -> usize {
+        if self.is_arr() || (self.is_ptr() && self.is_byte()) {
+            self.nmemb as usize
+        } else if self.bf_size > 0 {
+            let total_bits = (self.offt % 8) as u32 + self.bf_size as u32;
+            total_bits.div_ceil(8) as usize
+        } else if self.is_byte() {
+            1
+        } else if self.is_short() {
+            2
+        } else if self.is_int() {
+            4
+        } else if self.is_long() {
+            8
+        } else {
+            0
+        }
     }
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub(crate) struct XlateCtx {
-    load: LoadCtx,
+    pub(crate) load: LoadCtx,
     target: TargetCtx,
 }
 
@@ -154,7 +175,7 @@ impl XlateCtx {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Rhs {
+pub(crate) enum Rhs {
     Str(String),
     Unsigned(u64),
     Signed(i64),
@@ -167,7 +188,7 @@ impl Default for Rhs {
 }
 
 #[derive(Default)]
-struct TFlist {
+pub(crate) struct TFlist {
     true_list: Vec<usize>,
     false_list: Vec<usize>,
 }
@@ -443,16 +464,16 @@ enum AstNode {
     },
 }
 
-struct MetaExpr<'a> {
-    filter: eBpfProg,
-    btf_info: &'a BtfInfo,
-    btf: &'a Btf,
-    btf_type: Type,
-    offt: u32,
+pub(crate) struct MetaExpr<'a> {
+    pub(crate) filter: eBpfProg,
+    pub(crate) btf_info: &'a BtfInfo,
+    pub(crate) btf: &'a Btf,
+    pub(crate) btf_type: Type,
+    pub(crate) offt: u32,
 }
 
 impl<'a> MetaExpr<'a> {
-    fn init_filter(store_arg: bool) -> eBpfProg {
+    pub(crate) fn init_filter(store_arg: bool) -> eBpfProg {
         let mut filter = eBpfProg::new();
 
         if store_arg {
@@ -481,7 +502,7 @@ impl<'a> MetaExpr<'a> {
         filter
     }
 
-    fn new(btf_info: &'a BtfInfo, sym: &str, arg: bool) -> Result<MetaExpr<'a>> {
+    pub(crate) fn new(btf_info: &'a BtfInfo, sym: &str, arg: bool) -> Result<MetaExpr<'a>> {
         let types = btf_info
             .resolve_types_by_name(sym)
             .map_err(|e| anyhow!("unable to resolve {sym} data type ({e})"))?;
@@ -500,7 +521,7 @@ impl<'a> MetaExpr<'a> {
         })
     }
 
-    fn finalize_expr(
+    pub(crate) fn finalize_expr(
         &self,
         field: &LhsNode,
         rel_op: RelOp,
@@ -1099,7 +1120,7 @@ impl<'a> MetaExpr<'a> {
         Ok(tf_list)
     }
 
-    fn add_lval_next(&mut self, field: &LhsNode) -> Result<Option<TFlist>> {
+    pub(crate) fn add_lval_next(&mut self, field: &LhsNode) -> Result<Option<TFlist>> {
         let sub_node = Self::walk_btf_node(self.btf, &self.btf_type, &field.member, self.offt)?;
         let mut tf_list = None;
 
@@ -1195,7 +1216,7 @@ impl<'a> MetaExpr<'a> {
 
     // R1 = skb
     // R7 = Base address
-    fn emit_load_ptr(&mut self, offt: u32, mask: u64) -> Result<TFlist> {
+    pub(crate) fn emit_load_ptr(&mut self, offt: u32, mask: u64) -> Result<TFlist> {
         let mut tf_list = TFlist::default();
 
         self.filter.add_multi(&[
@@ -1289,7 +1310,7 @@ impl<'a> MetaExpr<'a> {
 
     // Return all comparable and walkable types Ptr, Int, Array, Enum[64],
     // Struct, Union
-    fn next_walkable(btf: &Btf, r#type: Type, casted: bool) -> Result<(u8, Type)> {
+    pub(crate) fn next_walkable(btf: &Btf, r#type: Type, casted: bool) -> Result<(u8, Type)> {
         let btf_type = r#type.as_btf_type();
         let mut ind = 0;
 
@@ -1313,7 +1334,7 @@ impl<'a> MetaExpr<'a> {
         bail!("failed to retrieve next walkable object.")
     }
 
-    fn walk_btf_node(
+    pub(crate) fn walk_btf_node(
         btf: &Btf,
         r#type: &Type,
         node_name: &str,
@@ -1353,6 +1374,42 @@ impl<'a> MetaExpr<'a> {
         Ok(None)
     }
 
+    /// Check if the current btf_type chain resolves to a string-like type
+    /// (char array or pointer to char). Used by resolve_fields to pick the
+    /// right dummy RHS for finalize_expr.
+    #[allow(dead_code)]
+    fn is_leaf_string_type(&self) -> bool {
+        let btf_type = match self.btf_type.as_btf_type() {
+            Some(t) => t,
+            None => return false,
+        };
+
+        // Check if we're directly an array
+        if matches!(self.btf_type, Type::Array(_)) {
+            return true;
+        }
+
+        // Walk the type chain to find the underlying type
+        for t in self.btf.chained_type_iter(btf_type) {
+            match &t {
+                Type::Array(_) => return true,
+                Type::Ptr(_) => {
+                    // Check what the pointer points to — if char, it's string-like
+                    continue;
+                }
+                Type::Int(i) if i.size() == 1 => {
+                    // We reach here if there was a Ptr before
+                    return true;
+                }
+                Type::Typedef(_) | Type::Volatile(_) | Type::Const(_)
+                | Type::Restrict(_) | Type::DeclTag(_) | Type::TypeTag(_) => continue,
+                _ => return false,
+            }
+        }
+
+        false
+    }
+
     fn process_parsed(&mut self, lhs: &Lhs, op: RelOp, rhs: Rhs) -> Result<TFlist> {
         let mut tf_list = TFlist::default();
 
@@ -1371,6 +1428,204 @@ impl<'a> MetaExpr<'a> {
 
         Ok(tf_list)
     }
+}
+
+/// Describes a pointer dereference hop along the path to a field.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct PtrHop {
+    /// Byte offset of the pointer within its parent struct.
+    pub(crate) byte_offset: u32,
+    /// Mask to apply to the pointer value (0 = no mask).
+    pub(crate) mask: u64,
+}
+
+/// A resolved sk_buff field descriptor — everything needed to generate
+/// capture bytecode or interpret captured data.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct ResolvedField {
+    /// The dot-path name, e.g. "mark", "dev.name", "_nfct:~0x7:nf_conn.mark".
+    pub(crate) name: String,
+    /// The leaf field's load context.
+    pub(crate) load: LoadCtx,
+    /// Pointer hops to reach the leaf. Each entry is a dereference step.
+    pub(crate) ptr_hops: Vec<PtrHop>,
+    /// Bitfield size in bits (0 = not a bitfield). Copied from the BTF walk.
+    pub(crate) bf_size: Option<u32>,
+}
+
+/// Parse a comma-separated list of sk_buff field paths and resolve each
+/// against BTF. The `sk_buff.` prefix is auto-prepended if missing.
+///
+/// Example: `"mark, dev.name, _nfct:~0x7:nf_conn.mark"`
+#[allow(dead_code)]
+pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
+    let btf_info = &inspector()?.kernel.btf;
+    let mut resolved = Vec::new();
+
+    for raw_field in fields_str.split(',') {
+        let field = raw_field.trim();
+        if field.is_empty() {
+            continue;
+        }
+
+        // Auto-prepend sk_buff. if not present.
+        let full_expr = if field.starts_with("sk_buff.") {
+            field.to_string()
+        } else {
+            format!("sk_buff.{field}")
+        };
+
+        // Parse the field path as a dummy filter expression (lhs != 0).
+        // We only need the LHS parsing, not the comparison.
+        let parse_str = format!("{full_expr} != 0");
+        let mut pairs = ParserMeta::parse(Rule::program, &parse_str)
+            .map_err(|e| anyhow!("failed to parse field '{field}': {e}"))?;
+
+        // program is silent (_), so we get expr directly.
+        let expr_pair = pairs
+            .next()
+            .ok_or_else(|| anyhow!("failed to parse field '{field}'"))?;
+
+        // expr -> primary -> term -> [lhs, op?, rhs?]
+        let primary_pair = expr_pair
+            .into_inner()
+            .next()
+            .ok_or_else(|| anyhow!("failed to parse expression for '{field}'"))?;
+        let term_pair = primary_pair
+            .into_inner()
+            .next()
+            .ok_or_else(|| anyhow!("failed to parse primary for '{field}'"))?;
+        let lhs_pair = term_pair
+            .into_inner()
+            .next()
+            .ok_or_else(|| anyhow!("failed to parse term for '{field}'"))?;
+
+        let lhs = ParserMeta::parse_lhs(lhs_pair)?;
+
+        // Walk the LHS path through BTF, collecting pointer hops.
+        let mut me = MetaExpr::new(btf_info, "sk_buff", false)?;
+        let mut ptr_hops = Vec::new();
+
+        for (pos, lhs_member) in lhs.iter().enumerate() {
+            if pos == lhs.len() - 1 {
+                // Leaf field — resolve via finalize_expr with dummy comparison.
+                let sub_node = MetaExpr::walk_btf_node(
+                    me.btf,
+                    &me.btf_type,
+                    &lhs_member.member,
+                    me.offt,
+                )?;
+                match sub_node {
+                    Some((offset, bfs, snode)) => {
+                        if lhs_member.cast.is_some() {
+                            bail!(
+                                "field '{}': casting a leaf member is not allowed",
+                                field
+                            );
+                        }
+                        me.btf_type = snode;
+                        me.offt = offset;
+                        // Use Rhs::Str for string/array/ptr types, Rhs::Unsigned
+                        // for numeric. finalize_expr validates the RHS type, but
+                        // for field resolution we only need the LoadCtx.
+                        let dummy_rhs = if me.is_leaf_string_type() {
+                            Rhs::Str(String::new())
+                        } else {
+                            Rhs::Unsigned(0)
+                        };
+                        let ctx = me.finalize_expr(lhs_member, RelOp::Ne, dummy_rhs, bfs)?;
+
+                        resolved.push(ResolvedField {
+                            name: field.to_string(),
+                            load: ctx.load,
+                            ptr_hops,
+                            bf_size: bfs,
+                        });
+                    }
+                    None => bail!(
+                        "field '{}': member '{}' not found in type '{}'",
+                        field,
+                        lhs_member.member,
+                        me.btf_type.name()
+                    ),
+                }
+                break;
+            }
+
+            // Intermediate node — walk and record pointer hops.
+            let sub_node = MetaExpr::walk_btf_node(
+                me.btf,
+                &me.btf_type,
+                &lhs_member.member,
+                me.offt,
+            )?;
+            match sub_node {
+                Some((offset, _bfs, snode)) => {
+                    let (ind, x) =
+                        MetaExpr::next_walkable(me.btf, snode, lhs_member.cast.is_some())?;
+
+                    if ind == 1 {
+                        // Pointer dereference
+                        ptr_hops.push(PtrHop {
+                            byte_offset: offset / 8,
+                            mask: lhs_member.mask,
+                        });
+                        me.offt = 0;
+                    } else if ind > 1 {
+                        bail!(
+                            "field '{}': pointers of pointers are not supported",
+                            field
+                        );
+                    } else {
+                        if lhs_member.mask != 0 {
+                            bail!(
+                                "field '{}': intermediate members masking is only supported for pointers",
+                                field
+                            );
+                        }
+                        me.offt = offset;
+                    }
+
+                    if let Some(tgt) = &lhs_member.cast {
+                        let mut types = me
+                            .btf_info
+                            .resolve_types_by_name(tgt)
+                            .map_err(|e| anyhow!("unable to resolve data type: {e}"))?;
+
+                        (me.btf, me.btf_type) = match types.iter_mut().find(|(_, t)| {
+                            matches!(t, Type::Union(_))
+                                || matches!(t, Type::Struct(_))
+                                || matches!(t, Type::Typedef(_))
+                        }) {
+                            Some((ref btf, r#type)) => {
+                                let nw = MetaExpr::next_walkable(btf, r#type.clone(), false)?;
+                                if nw.0 > 0 {
+                                    bail!(
+                                        "cast type ({tgt}: {}) cannot be an alias to a pointer",
+                                        r#type.name()
+                                    );
+                                }
+                                (btf, nw.1)
+                            }
+                            None => bail!("Could not resolve {tgt} to a struct or typedef"),
+                        };
+                    } else {
+                        me.btf_type = x.clone();
+                    }
+                }
+                None => bail!(
+                    "field '{}': member '{}' not found in type '{}'",
+                    field,
+                    lhs_member.member,
+                    me.btf_type.name()
+                ),
+            }
+        }
+    }
+
+    Ok(resolved)
 }
 
 #[derive(Default)]
@@ -1734,5 +1989,65 @@ mod tests {
         vm.register_helper(115, bpf_probe_read_kernel_str_helper)
             .unwrap();
         vm.execute_program(&mem, &mbuff).unwrap() != 0
+    }
+
+    #[test]
+    fn resolve_fields_scalar() {
+        let fields = resolve_fields("mark").unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "mark");
+        assert!(fields[0].load.is_int()); // u32
+        assert!(!fields[0].load.is_signed());
+        assert!(fields[0].ptr_hops.is_empty());
+    }
+
+    #[test]
+    fn resolve_fields_string_through_ptr() {
+        let fields = resolve_fields("dev.name").unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "dev.name");
+        // dev is a pointer dereference
+        assert_eq!(fields[0].ptr_hops.len(), 1);
+        assert_eq!(fields[0].ptr_hops[0].mask, 0);
+        // name is a char array
+        assert!(fields[0].load.is_arr());
+    }
+
+    #[test]
+    fn resolve_fields_with_mask_and_cast() {
+        let fields = resolve_fields("_nfct:~0x7:nf_conn.mark").unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "_nfct:~0x7:nf_conn.mark");
+        // One pointer hop for _nfct with mask ~0x7
+        assert_eq!(fields[0].ptr_hops.len(), 1);
+        assert_eq!(fields[0].ptr_hops[0].mask, !0x7_u64);
+        // Leaf is mark (u32)
+        assert!(fields[0].load.is_int());
+    }
+
+    #[test]
+    fn resolve_fields_multi() {
+        let fields = resolve_fields("mark, dev.name, priority").unwrap();
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].name, "mark");
+        assert_eq!(fields[1].name, "dev.name");
+        assert_eq!(fields[2].name, "priority");
+    }
+
+    #[test]
+    fn resolve_fields_auto_prefix() {
+        // With and without sk_buff. prefix should produce the same result.
+        let f1 = resolve_fields("mark").unwrap();
+        let f2 = resolve_fields("sk_buff.mark").unwrap();
+        assert_eq!(f1[0].load, f2[0].load);
+        assert_eq!(f1[0].ptr_hops.len(), f2[0].ptr_hops.len());
+    }
+
+    #[test]
+    fn resolve_fields_errors() {
+        // Unknown field
+        assert!(resolve_fields("nonexistent_field").is_err());
+        // Unsupported type (struct, not a leaf)
+        assert!(resolve_fields("dev").is_err());
     }
 }
