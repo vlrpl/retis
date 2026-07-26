@@ -1389,16 +1389,19 @@ impl<'a> MetaExpr<'a> {
             return true;
         }
 
-        // Walk the type chain to find the underlying type
+        // Walk the type chain to find the underlying type.
+        // Only consider it a string if there's a char behind a pointer
+        // or an array in the chain.
+        let mut saw_ptr = false;
         for t in self.btf.chained_type_iter(btf_type) {
             match &t {
                 Type::Array(_) => return true,
                 Type::Ptr(_) => {
-                    // Check what the pointer points to — if char, it's string-like
+                    saw_ptr = true;
                     continue;
                 }
-                Type::Int(i) if i.size() == 1 => {
-                    // We reach here if there was a Ptr before
+                Type::Int(i) if i.size() == 1 && saw_ptr => {
+                    // Pointer to char — this is a string type.
                     return true;
                 }
                 Type::Typedef(_) | Type::Volatile(_) | Type::Const(_)
