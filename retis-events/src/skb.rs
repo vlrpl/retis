@@ -5,6 +5,117 @@ use retis_pnet::ethernet::EtherType;
 use super::*;
 use crate::{event_section, event_type, Formatter};
 
+// ---- Dynamic field report types ----
+
+/// The type of a dynamically captured sk_buff field value.
+#[event_type]
+#[serde(rename_all = "snake_case")]
+pub enum SkbFieldValue {
+    U8 { value: u8 },
+    U16 { value: u16 },
+    U32 { value: u32 },
+    U64 { value: u64 },
+    I8 { value: i8 },
+    I16 { value: i16 },
+    I32 { value: i32 },
+    I64 { value: i64 },
+    Str { value: String },
+    /// The BPF read failed (e.g. NULL pointer dereference).
+    Invalid { reason: String },
+}
+
+impl fmt::Display for SkbFieldValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SkbFieldValue::U8 { value } => write!(f, "{value:#x}"),
+            SkbFieldValue::U16 { value } => write!(f, "{value:#x}"),
+            SkbFieldValue::U32 { value } => write!(f, "{value:#x}"),
+            SkbFieldValue::U64 { value } => write!(f, "{value:#x}"),
+            SkbFieldValue::I8 { value } => write!(f, "{value}"),
+            SkbFieldValue::I16 { value } => write!(f, "{value}"),
+            SkbFieldValue::I32 { value } => write!(f, "{value}"),
+            SkbFieldValue::I64 { value } => write!(f, "{value}"),
+            SkbFieldValue::Str { value } => write!(f, "{value:?}"),
+            SkbFieldValue::Invalid { .. } => write!(f, "<err>"),
+        }
+    }
+}
+
+/// A named, typed field captured from an sk_buff.
+#[event_type]
+pub struct SkbCapturedField {
+    /// Dot-path name, e.g. "dev.name", "mark".
+    pub name: String,
+    /// The captured value.
+    pub value: SkbFieldValue,
+}
+
+/// Dynamic field report — all user-requested fields captured from an sk_buff.
+#[event_section]
+#[derive(Default)]
+pub struct SkbFieldReportEvent {
+    /// Captured fields.
+    pub fields: Vec<SkbCapturedField>,
+}
+
+impl EventFmt for SkbFieldReportEvent {
+    fn event_fmt(&self, f: &mut Formatter, _format: &DisplayFormat) -> fmt::Result {
+        write!(f, "fields [")?;
+        let mut sep = "";
+        for field in &self.fields {
+            write!(f, "{sep}{}: {}", field.name, field.value)?;
+            sep = " ";
+        }
+        write!(f, "]")
+    }
+
+    fn can_format(&self, _format: &DisplayFormat) -> bool {
+        !self.fields.is_empty()
+    }
+}
+
+#[cfg(feature = "python")]
+#[pyo3::pymethods]
+impl SkbFieldReportEvent {
+    /// Dict-style access: report["mark"] returns a native Python type.
+    fn __getitem__(&self, py: pyo3::Python<'_>, key: &str) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+        self.fields
+            .iter()
+            .find(|f| f.name == key)
+            .map(|f| field_value_to_py(py, &f.value))
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))
+    }
+
+    /// Check if a field exists: "mark" in report.
+    fn __contains__(&self, key: &str) -> bool {
+        self.fields.iter().any(|f| f.name == key)
+    }
+
+    /// List all captured field names.
+    fn names(&self) -> Vec<String> {
+        self.fields.iter().map(|f| f.name.clone()).collect()
+    }
+}
+
+#[cfg(feature = "python")]
+fn field_value_to_py(py: pyo3::Python<'_>, val: &SkbFieldValue) -> pyo3::Py<pyo3::PyAny> {
+    use pyo3::IntoPyObjectExt;
+    match val {
+        SkbFieldValue::U8 { value } => (*value as u64).into_py_any(py).unwrap(),
+        SkbFieldValue::U16 { value } => (*value as u64).into_py_any(py).unwrap(),
+        SkbFieldValue::U32 { value } => (*value as u64).into_py_any(py).unwrap(),
+        SkbFieldValue::U64 { value } => value.into_py_any(py).unwrap(),
+        SkbFieldValue::I8 { value } => (*value as i64).into_py_any(py).unwrap(),
+        SkbFieldValue::I16 { value } => (*value as i64).into_py_any(py).unwrap(),
+        SkbFieldValue::I32 { value } => (*value as i64).into_py_any(py).unwrap(),
+        SkbFieldValue::I64 { value } => value.into_py_any(py).unwrap(),
+        SkbFieldValue::Str { value } => value.into_py_any(py).unwrap(),
+        SkbFieldValue::Invalid { .. } => py.None().into_py_any(py).unwrap(),
+    }
+}
+
+// ---- End dynamic field report types ----
+
 /// Skb section.
 #[event_section]
 #[derive(Default)]
@@ -17,6 +128,8 @@ pub struct SkbEvent {
     pub data_ref: Option<SkbDataRefEvent>,
     /// GSO.
     pub gso: Option<SkbGsoEvent>,
+    /// Dynamic field report (from --skb-fields).
+    pub field_report: Option<SkbFieldReportEvent>,
 }
 
 impl EventFmt for SkbEvent {
@@ -110,6 +223,13 @@ impl EventFmt for SkbEvent {
             write!(f, "size {}]", gso.size)?;
         }
 
+        if let Some(field_report) = &self.field_report {
+            if field_report.can_format(format) {
+                space.write(f)?;
+                field_report.event_fmt(f, format)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -118,6 +238,10 @@ impl EventFmt for SkbEvent {
             || self.meta.is_some()
             || self.data_ref.is_some()
             || self.gso.is_some()
+            || self
+                .field_report
+                .as_ref()
+                .is_some_and(|fr| fr.can_format(format))
     }
 }
 
@@ -321,4 +445,80 @@ pub struct SkbGsoEvent {
     pub segs: u32,
     /// GSO type. See `SKB_GSO_*` in include/linux/skbuff.h
     pub r#type: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+
+    #[test]
+    fn field_report_display() {
+        let report = SkbFieldReportEvent {
+            fields: vec![
+                SkbCapturedField {
+                    name: "mark".to_string(),
+                    value: SkbFieldValue::U32 { value: 0xc0de },
+                },
+                SkbCapturedField {
+                    name: "dev.name".to_string(),
+                    value: SkbFieldValue::Str {
+                        value: "eth0".to_string(),
+                    },
+                },
+                SkbCapturedField {
+                    name: "bad_field".to_string(),
+                    value: SkbFieldValue::Invalid {
+                        reason: "null pointer".to_string(),
+                    },
+                },
+            ],
+        };
+
+        let format = DisplayFormat::new();
+        let output = format!(
+            "{}",
+            report.display(&format, &crate::FormatterConf::new())
+        );
+        assert_eq!(output, r#"fields [mark: 0xc0de dev.name: "eth0" bad_field: <err>]"#);
+    }
+
+    #[test]
+    fn field_report_serialization() -> Result<()> {
+        let report = SkbFieldReportEvent {
+            fields: vec![
+                SkbCapturedField {
+                    name: "mark".to_string(),
+                    value: SkbFieldValue::U32 { value: 42 },
+                },
+                SkbCapturedField {
+                    name: "dev.name".to_string(),
+                    value: SkbFieldValue::Str {
+                        value: "lo".to_string(),
+                    },
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&report)?;
+        let deserialized: SkbFieldReportEvent = serde_json::from_str(&json)?;
+
+        assert_eq!(deserialized.fields.len(), 2);
+        assert_eq!(deserialized.fields[0].name, "mark");
+        assert_eq!(deserialized.fields[1].name, "dev.name");
+
+        // Verify the JSON structure includes the type tag.
+        let json_val: serde_json::Value = serde_json::from_str(&json)?;
+        let first_val = &json_val["fields"][0]["value"];
+        assert!(first_val.is_object());
+
+        Ok(())
+    }
+
+    #[test]
+    fn field_report_empty() {
+        let report = SkbFieldReportEvent { fields: vec![] };
+        let format = DisplayFormat::new();
+        assert!(!report.can_format(&format));
+    }
 }
