@@ -4,6 +4,7 @@
 
 #include <common.h>
 #include <if_vlan.h>
+#include <skb_capture.h>
 
 #define BIT(x) (1 << (x))
 
@@ -18,6 +19,7 @@ enum skb_sections {
 	SECTION_META,
 	SECTION_DATA_REF,
 	SECTION_GSO,
+	SECTION_FIELD_REPORT,
 } __binding;
 
 /* Skb hook configuration. A map is used to set the config from
@@ -25,6 +27,8 @@ enum skb_sections {
  */
 struct skb_config {
 	u64 sections;
+	u8 n_fields;
+	u16 field_report_size;
 } __binding;
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -282,6 +286,16 @@ static __always_inline int process_skb(struct retis_context *ctx,
 	}
 
 skip_gso:
+	if (cfg->sections & BIT(SECTION_FIELD_REPORT)) {
+		void *section = get_event_section(event, COLLECTOR_SKB,
+						  SECTION_FIELD_REPORT,
+						  cfg->field_report_size);
+		if (section) {
+			*(u8 *)section = cfg->n_fields;
+			capture_fields(skb, section + 1);
+		}
+	}
+
 	return 0;
 }
 
