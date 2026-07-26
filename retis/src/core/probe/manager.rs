@@ -110,7 +110,9 @@ impl ProbeManager {
         // Set up filters and their handlers.
         for filter in builder.filters.iter() {
             match filter {
-                Filter::Packet(magic, _) | Filter::Meta(magic, _) => {
+                Filter::Packet(magic, _)
+                | Filter::Meta(magic, _)
+                | Filter::Capture(magic, _) => {
                     filters::register_filter(*magic, filter)?;
                 }
             }
@@ -129,6 +131,11 @@ impl ProbeManager {
         register_filter_handler(
             "raw_tracepoint/probe",
             libbpf_rs::ProgramType::RawTracepoint,
+            Some(fixup_filter_load_fn),
+        )?;
+        register_filter_handler(
+            "ext/hook",
+            libbpf_rs::ProgramType::Ext,
             Some(fixup_filter_load_fn),
         )?;
 

@@ -17,6 +17,10 @@ use crate::{
     },
 };
 
+/// Placeholder constant for the SKB field capture bytecode injection.
+/// Matches `0xdeadbef0` defined in skb_capture.h.
+pub(crate) const SKB_CAPTURE: u32 = 0xdeadbef0;
+
 #[derive(Clone)]
 pub(crate) struct BpfFilter(pub(crate) Vec<u8>);
 
@@ -24,6 +28,8 @@ pub(crate) struct BpfFilter(pub(crate) Vec<u8>);
 pub(crate) enum Filter {
     Packet(packet_filter_uapi::filter_type, BpfFilter),
     Meta(meta_filter_uapi::meta_filter_type, BpfFilter),
+    #[allow(dead_code)]
+    Capture(u32, BpfFilter),
 }
 
 static FM: Lazy<Mutex<HashMap<u32, Filter>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -72,7 +78,7 @@ fn get_default_filter() -> Vec<u8> {
 fn retrieve_filter(code: u32) -> Vec<libbpf_sys::bpf_insn> {
     let f = if let Some(f) = get_filter(code) {
         match f {
-            Filter::Packet(_, bf) | Filter::Meta(_, bf) => bf.0,
+            Filter::Packet(_, bf) | Filter::Meta(_, bf) | Filter::Capture(_, bf) => bf.0,
         }
     } else {
         get_default_filter()
@@ -108,6 +114,7 @@ pub(crate) unsafe extern "C" fn fixup_filter_load_fn(
         packet_filter_uapi::L2,
         packet_filter_uapi::L3,
         meta_filter_uapi::META,
+        SKB_CAPTURE,
     ];
     let mut pseudo_calls: Vec<usize> = Vec::new();
     let mut placeholder_calls: Vec<(usize, _)> = Vec::new();
