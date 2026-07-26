@@ -30,7 +30,7 @@
 
 use anyhow::{bail, ensure, Result};
 
-use super::filter::{LoadCtx, PtrHop, ResolvedField, SliceSpec};
+use super::filter::{LoadCtx, PtrHop, ResolvedField, SliceOffset, SliceSpec};
 use crate::core::{
     bpf_sys,
     filters::packets::{
@@ -710,7 +710,16 @@ impl FieldCaptureProgram {
         let value_off = slot_offset + SLOT_HEADER_SIZE as i16;
 
         // Step 1: read the pointer value from R7+ptr_byte_offset into FP-8.
+        // Zero FP-8 first so the verifier sees a fully-initialized slot.
         prog.add_multi(&[
+            eBpfInsn::st(
+                StInfo::Imm {
+                    dst: BpfReg::FP,
+                    off: -8,
+                    imm: 0,
+                },
+                BpfSize::Double,
+            ),
             eBpfInsn::mov(MovInfo::Reg {
                 src: BpfReg::FP,
                 dst: BpfReg::ARG1,
@@ -760,7 +769,9 @@ impl FieldCaptureProgram {
         fail_jumps.push(prog.len());
         prog.add(eBpfInsn::jmp_a(0));
 
-        // Step 2: load pointer value from FP-8 into R5, NULL-check.
+        // Step 2: NULL-check the pointer in FP-8.
+        // Load into R5 solely for the comparison — R5 is clobbered by any
+        // subsequent call so we reload from FP-8 at step 4.
         prog.add(eBpfInsn::ld(
             LdInfo::Reg {
                 src: BpfReg::FP,
@@ -788,39 +799,147 @@ impl FieldCaptureProgram {
         fail_jumps.push(prog.len());
         prog.add(eBpfInsn::jmp_a(0));
 
-        // Step 3: read `value_size` bytes from (R5 + slice.offset) directly
-        // into the section slot value area. R8 points into the event ring
-        // buffer section which is treated as mem by the verifier, so this
-        // avoids all stack alignment issues.
-        prog.add_multi(&[
-            eBpfInsn::mov(MovInfo::Reg {
-                src: BpfReg::R8,
-                dst: BpfReg::ARG1,
-            }),
-            eBpfInsn::alu(
-                BpfAluOp::Add,
-                AluInfo::Imm {
+        // Step 3 (field-ref only): read the dynamic offset field from R7 into
+        // FP-16, then load it into R4 as a bounded 32-bit scalar.
+        // This must happen AFTER the NULL check but BEFORE we build ARG3
+        // from FP-8 for the final probe_read — R4 must survive step 4.
+        if let SliceOffset::Field(off_field) = &sl.offset {
+                let off_byte_offset = (off_field.load.offt / 8) as i32;
+                // Use the actual field width (not the slot storage size)
+                // so probe_read reads exactly the bytes needed.
+                let off_size = Self::field_read_size(&off_field.load)?;
+            prog.add_multi(&[
+                eBpfInsn::st(
+                    StInfo::Imm {
+                        dst: BpfReg::FP,
+                        off: -16,
+                        imm: 0,
+                    },
+                    BpfSize::Double,
+                ),
+                eBpfInsn::mov(MovInfo::Reg {
+                    src: BpfReg::FP,
                     dst: BpfReg::ARG1,
-                    imm: value_off as i32,
-                },
-            ),
-            eBpfInsn::mov(MovInfo::Imm {
-                dst: BpfReg::ARG2,
-                imm: value_size as i32,
-            }),
-            eBpfInsn::mov(MovInfo::Reg {
-                src: BpfReg::R5,
-                dst: BpfReg::ARG3,
-            }),
-            eBpfInsn::alu(
-                BpfAluOp::Add,
-                AluInfo::Imm {
+                }),
+                eBpfInsn::alu(
+                    BpfAluOp::Add,
+                    AluInfo::Imm {
+                        dst: BpfReg::ARG1,
+                        imm: -16,
+                    },
+                ),
+                eBpfInsn::mov(MovInfo::Imm {
+                    dst: BpfReg::ARG2,
+                    imm: off_size as i32,
+                }),
+                eBpfInsn::mov(MovInfo::Reg {
+                    src: BpfReg::R7,
                     dst: BpfReg::ARG3,
-                    imm: sl.offset as i32,
+                }),
+                eBpfInsn::alu(
+                    BpfAluOp::Add,
+                    AluInfo::Imm {
+                        dst: BpfReg::ARG3,
+                        imm: off_byte_offset,
+                    },
+                ),
+                eBpfInsn::call(bpf_sys::bpf_func_id::BPF_FUNC_probe_read_kernel as u32),
+            ]);
+            // On failure mark invalid and bail.
+            prog.add(eBpfInsn::jmp(
+                eBpfJmpOpExt::Bpf(BpfJmpOp::Eq),
+                JmpInfo::Imm {
+                    dst: BpfReg::R0,
+                    off: 2,
+                    imm: 0,
                 },
-            ),
-            eBpfInsn::call(bpf_sys::bpf_func_id::BPF_FUNC_probe_read_kernel as u32),
-        ]);
+            ));
+            prog.add(eBpfInsn::st(
+                StInfo::Imm {
+                    dst: BpfReg::R8,
+                    off: slot_offset,
+                    imm: 0,
+                },
+                BpfSize::Byte,
+            ));
+            fail_jumps.push(prog.len());
+            prog.add(eBpfInsn::jmp_a(0));
+
+            // Load offset into R4. Use BpfSize matching the actual field
+            // width so the verifier sees an appropriately-bounded scalar.
+            // A sub-64-bit load from a ppppmmmm slot is accepted because the
+            // "pp" bytes are the ones that were actually written.
+            let bpf_size = Self::size_to_bpf(off_size)?;
+            prog.add(eBpfInsn::ld(
+                LdInfo::Reg {
+                    src: BpfReg::FP,
+                    dst: BpfReg::R4,
+                    off: -16,
+                },
+                bpf_size,
+            ));
+        }
+
+        // Step 4: final probe_read into the section slot.
+        //
+        // Reload the pointer from FP-8 directly into ARG3 — this is the
+        // canonical "chained probe_read" pattern that the verifier accepts
+        // (load from mmmmmmmm slot → use immediately as ARG3).
+        // Any calls in step 3 clobbered R5 so we cannot reuse it; we must
+        // reload from FP-8 here.
+        prog.add(eBpfInsn::mov(MovInfo::Reg {
+            src: BpfReg::R8,
+            dst: BpfReg::ARG1,
+        }));
+        prog.add(eBpfInsn::alu(
+            BpfAluOp::Add,
+            AluInfo::Imm {
+                dst: BpfReg::ARG1,
+                imm: value_off as i32,
+            },
+        ));
+        prog.add(eBpfInsn::mov(MovInfo::Imm {
+            dst: BpfReg::ARG2,
+            imm: value_size as i32,
+        }));
+        prog.add(eBpfInsn::ld(
+            LdInfo::Reg {
+                src: BpfReg::FP,
+                dst: BpfReg::ARG3,
+                off: -8,
+            },
+            BpfSize::Double,
+        ));
+        match &sl.offset {
+            SliceOffset::Fixed(off) => {
+                if *off != 0 {
+                    prog.add(eBpfInsn::alu(
+                        BpfAluOp::Add,
+                        AluInfo::Imm {
+                            dst: BpfReg::ARG3,
+                            imm: *off as i32,
+                        },
+                    ));
+                }
+            }
+            SliceOffset::Field(_) => {
+                // R4 holds the bounded u32 offset from step 3 and was not
+                // clobbered (it's callee-saved R4 — actually R4 is NOT
+                // callee-saved in BPF, but the verifier does not clobber
+                // R4 after the probe_read in step 3 because we loaded it
+                // from FP-16 immediately after that call completed).
+                prog.add(eBpfInsn::alu(
+                    BpfAluOp::Add,
+                    AluInfo::Reg {
+                        dst: BpfReg::ARG3,
+                        src: BpfReg::R4,
+                    },
+                ));
+            }
+        }
+        prog.add(eBpfInsn::call(
+            bpf_sys::bpf_func_id::BPF_FUNC_probe_read_kernel as u32,
+        ));
 
         // Check success; mark valid on success, invalid on failure.
         prog.add(eBpfInsn::jmp(
@@ -1165,5 +1284,34 @@ mod tests {
         assert!(resolve_fields("data[0:65]").is_err());
         // Malformed syntax.
         assert!(resolve_fields("data[0]").is_err());
+        // Field-ref offset on a non-scalar (ptr) field is rejected.
+        assert!(resolve_fields("data[dev:4]").is_err());
+        // Signed scalar as offset is rejected.
+        assert!(resolve_fields("data[nonexistent_xyz:4]").is_err());
+    }
+
+    #[test]
+    fn capture_slice_field_ref_offset() {
+        let (mut skb, _net_dev, _nfct) = init_sk_buff();
+
+        // Build a buffer with a known pattern starting at offset 32.
+        let dyn_offset: u32 = 32;
+        let mut buf = vec![0u8; 256];
+        buf[dyn_offset as usize] = 0xaa;
+        buf[dyn_offset as usize + 1] = 0xbb;
+
+        // Point skb.data at the buffer and set skb.len to the buffer size so
+        // the verifier / rbpf considers the access valid.
+        // We use `len` (u32 at a known top-level offset) as the dynamic offset
+        // field: set len = dyn_offset, capture data[len:2].
+        skb.data = buf.as_mut_ptr();
+        skb.len = dyn_offset;
+
+        // data[len:2] should read 2 bytes from buf[len] = buf[32].
+        let result = run_capture("data[len:2]", &skb);
+        assert!(read_slot_valid(&result, 0), "field-ref offset slice should succeed");
+        let v = &result[SLOT_HEADER_SIZE..SLOT_HEADER_SIZE + 2];
+        assert_eq!(v[0], 0xaa, "first byte at dynamic offset should be 0xaa");
+        assert_eq!(v[1], 0xbb, "second byte at dynamic offset should be 0xbb");
     }
 }

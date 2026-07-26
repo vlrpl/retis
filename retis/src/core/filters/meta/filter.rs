@@ -1507,13 +1507,36 @@ pub(crate) struct PtrHop {
     pub(crate) mask: u64,
 }
 
+/// The offset within a slice capture — either a compile-time constant or a
+/// reference to another sk_buff scalar field (e.g. `mac_header`).
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) enum SliceOffset {
+    /// Fixed byte offset from the pointer value.
+    Fixed(u32),
+    /// Offset taken at runtime from another sk_buff scalar field.
+    /// The inner `ResolvedField` must be a direct (no ptr hops) scalar.
+    Field(Box<ResolvedField>),
+}
+
+impl SliceOffset {
+    /// Display form used in the field name (e.g. "0" or "mac_header").
+    pub(crate) fn display(&self) -> String {
+        match self {
+            SliceOffset::Fixed(n) => n.to_string(),
+            SliceOffset::Field(f) => f.name.clone(),
+        }
+    }
+}
+
 /// Optional byte-slice parameters attached to a pointer field.
-/// Represents the `[offset:length]` suffix in e.g. `data[0:16]`.
+/// Represents the `[offset:length]` suffix in e.g. `data[0:16]` or
+/// `head[mac_header:14]`.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub(crate) struct SliceSpec {
     /// Byte offset from the pointer value to start reading.
-    pub(crate) offset: u32,
+    pub(crate) offset: SliceOffset,
     /// Number of bytes to read (capped at MAX_SLICE_LEN).
     pub(crate) length: u32,
 }
@@ -1538,13 +1561,10 @@ pub(crate) struct ResolvedField {
     pub(crate) slice: Option<SliceSpec>,
 }
 
-/// Parse a comma-separated list of sk_buff field paths and resolve each
-/// against BTF. The `sk_buff.` prefix is auto-prepended if missing.
-///
-/// Example: `"mark, dev.name, _nfct:~0x7:nf_conn.mark"`
-#[allow(dead_code)]
-pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
-    let btf_info = &inspector()?.kernel.btf;
+/// Resolve a single field token (no commas, no slice suffix) against BTF.
+/// Called by `resolve_fields` for each comma-separated token and also by the
+/// slice-offset field-ref path.
+fn resolve_fields_impl(btf_info: &BtfInfo, fields_str: &str) -> Result<Vec<ResolvedField>> {
     let mut resolved = Vec::new();
 
     for raw_field in fields_str.split(',') {
@@ -1554,6 +1574,9 @@ pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
         }
 
         // Parse optional [offset:length] suffix before BTF resolution.
+        // offset can be:
+        //   - a non-negative integer literal: data[12:4]
+        //   - an sk_buff scalar field name:   head[mac_header:14]
         let (field, slice_spec) = if let Some(bracket) = field.find('[') {
             let base = &field[..bracket];
             let rest = &field[bracket..];
@@ -1565,9 +1588,7 @@ pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
             let (off_str, len_str) = inner.split_once(':').ok_or_else(|| {
                 anyhow!("field '{field}': slice must be [offset:length]")
             })?;
-            let offset = off_str.trim().parse::<u32>().map_err(|_| {
-                anyhow!("field '{field}': slice offset must be a non-negative integer")
-            })?;
+            let off_str = off_str.trim();
             let length = len_str.trim().parse::<u32>().map_err(|_| {
                 anyhow!("field '{field}': slice length must be a non-negative integer")
             })?;
@@ -1579,7 +1600,29 @@ pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
                 length <= MAX_SLICE_LEN,
                 "field '{field}': slice length {length} exceeds maximum ({MAX_SLICE_LEN})"
             );
-            (base, Some(SliceSpec { offset, length }))
+            // Try to parse as a fixed integer first; fall back to field ref.
+            let slice_offset = if let Ok(n) = off_str.parse::<u32>() {
+                SliceOffset::Fixed(n)
+            } else {
+                // Treat as a field reference — must be a direct scalar field
+                // of sk_buff (no pointer hops, no bitfield).
+                let off_fields = resolve_fields_impl(btf_info, off_str)?;
+                ensure!(
+                    off_fields.len() == 1,
+                    "field '{field}': offset field '{off_str}' resolved to multiple fields"
+                );
+                let off_field = off_fields.into_iter().next().unwrap();
+                ensure!(
+                    off_field.ptr_hops.is_empty(),
+                    "field '{field}': offset field '{off_str}' must not require pointer hops"
+                );
+                ensure!(
+                    off_field.load.is_num() && !off_field.load.is_signed(),
+                    "field '{field}': offset field '{off_str}' must be an unsigned scalar"
+                );
+                SliceOffset::Field(Box::new(off_field))
+            };
+            (base, Some(SliceSpec { offset: slice_offset, length }))
         } else {
             (field, None)
         };
@@ -1669,7 +1712,7 @@ pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
 
                         // Build the display name including the slice suffix.
                         let display_name = if let Some(ref sl) = slice_spec {
-                            format!("{}[{}:{}]", field, sl.offset, sl.length)
+                            format!("{}[{}:{}]", field, sl.offset.display(), sl.length)
                         } else {
                             field.to_string()
                         };
@@ -1764,6 +1807,16 @@ pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
     }
 
     Ok(resolved)
+}
+
+/// Parse a comma-separated list of sk_buff field paths and resolve each
+/// against BTF. The `sk_buff.` prefix is auto-prepended if missing.
+///
+/// Example: `"mark, dev.name, _nfct:~0x7:nf_conn.mark"`
+#[allow(dead_code)]
+pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
+    let btf_info = &inspector()?.kernel.btf;
+    resolve_fields_impl(btf_info, fields_str)
 }
 
 #[derive(Default)]

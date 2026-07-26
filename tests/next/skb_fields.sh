@@ -215,4 +215,47 @@ EOF
 	$retis python test.py
 }
 
-run_tests skb_fields_scalar skb_fields_string skb_fields_python_access skb_fields_no_regression skb_fields_slice
+# Verify that a field-ref offset works: head[mac_header:14] reads 14 bytes
+# (Ethernet header) starting at skb->head + skb->mac_header.
+# At net:netif_receive_skb both head and mac_header are valid.
+# We verify: Python returns bytes, length is 14, and the EtherType field
+# (bytes 12-13) matches the IPv4 EtherType (0x0800).
+skb_fields_slice_field_offset() {
+	require $retis python -h || return 0
+	two_ns
+
+	$retis collect -o -c skb --skb-fields 'head[mac_header:14]' \
+		-f icmp -p net:netif_receive_skb \
+		--cmd 'ip netns exec ns0 ping -c1 10.0.42.2; sleep 1'
+
+	cat >test.py <<EOF
+import struct
+
+r = reader.events()
+next(r)  # skip startup event
+
+found = False
+for e in r:
+    skb = e.skb
+    if skb is None:
+        continue
+    fr = skb.field_report
+    if fr is None:
+        continue
+    if "head[mac_header:14]" not in fr:
+        continue
+    eth = fr["head[mac_header:14]"]
+    assert isinstance(eth, bytes), f"Expected bytes, got {type(eth)}"
+    assert len(eth) == 14, f"Expected 14 bytes (Ethernet header), got {len(eth)}"
+    # Bytes 12-13 are the EtherType; 0x0800 = IPv4
+    ethertype = struct.unpack("!H", eth[12:14])[0]
+    assert ethertype == 0x0800, f"Expected IPv4 EtherType 0x0800, got {ethertype:#x}"
+    found = True
+    break
+
+assert found, "No skb event with head[mac_header:14] in field_report"
+EOF
+	$retis python test.py
+}
+
+run_tests skb_fields_scalar skb_fields_string skb_fields_python_access skb_fields_no_regression skb_fields_slice skb_fields_slice_field_offset
