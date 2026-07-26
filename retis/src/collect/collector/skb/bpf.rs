@@ -152,7 +152,8 @@ fn unmarshal_field_report(
     let mut offset = 0usize;
 
     for (idx, field) in schema.iter().enumerate().take(n_fields) {
-        let value_size = FieldCaptureProgram::field_value_size(&field.load)?;
+        let value_size =
+            FieldCaptureProgram::field_value_size_with_slice(&field.load, field.slice.as_ref())?;
         let slot_end = offset + SLOT_HEADER_SIZE + value_size;
 
         if slot_end > slot_data.len() {
@@ -170,7 +171,7 @@ fn unmarshal_field_report(
                 reason: "BPF read failed".to_string(),
             }
         } else {
-            parse_field_value(value_bytes, &field.load)?
+            parse_field_value(value_bytes, &field.load, field.slice.as_ref())?
         };
 
         fields.push(SkbCapturedField {
@@ -185,7 +186,18 @@ fn unmarshal_field_report(
 }
 
 /// Convert raw slot bytes to an SkbFieldValue based on the field's LoadCtx.
-fn parse_field_value(bytes: &[u8], load: &LoadCtx) -> Result<SkbFieldValue> {
+fn parse_field_value(
+    bytes: &[u8],
+    load: &LoadCtx,
+    slice: Option<&crate::core::filters::meta::filter::SliceSpec>,
+) -> Result<SkbFieldValue> {
+    // Byte slice field — return raw bytes.
+    if slice.is_some() {
+        return Ok(SkbFieldValue::Bytes {
+            value: bytes.to_vec(),
+        });
+    }
+
     // String / char-array field.
     if load.is_arr() || (load.is_ptr() && load.is_byte()) {
         let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());

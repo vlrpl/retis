@@ -150,4 +150,69 @@ EOF
 	$retis python test.py
 }
 
-run_tests skb_fields_scalar skb_fields_string skb_fields_python_access skb_fields_no_regression
+# Verify that --skb-fields captures a byte slice from a pointer-to-byte field.
+# At ip_rcv, skb->data points to the IP header. The first byte of an IPv4
+# packet is 0x45 (version=4, IHL=5). We capture data[0:4] and verify:
+# - the field name includes the slice notation
+# - Python returns a bytes object
+# - the first byte is 0x45 (standard IPv4/IHL=5)
+skb_fields_slice() {
+	require $retis python -h || return 0
+	two_ns
+
+	$retis collect -o -c skb --skb-fields 'data[0:4],data[12:4],data[9:1],data[8:20]' \
+		-f icmp -p ip_rcv \
+		--cmd 'ip netns exec ns0 ping -c1 10.0.42.2; sleep 1'
+
+	cat >test.py <<EOF
+import socket
+
+r = reader.events()
+next(r)  # skip startup event
+
+found = False
+for e in r:
+    skb = e.skb
+    if skb is None:
+        continue
+    fr = skb.field_report
+    if fr is None:
+        continue
+    if not all(k in fr for k in ("data[0:4]", "data[12:4]", "data[9:1]", "data[8:20]")):
+        continue
+    hdr   = fr["data[0:4]"]
+    saddr = fr["data[12:4]"]
+    assert isinstance(hdr,   bytes), f"Expected bytes, got {type(hdr)}"
+    assert isinstance(saddr, bytes), f"Expected bytes, got {type(saddr)}"
+    assert len(hdr)   == 4, f"Expected 4 bytes, got {len(hdr)}"
+    assert len(saddr) == 4, f"Expected 4 bytes, got {len(saddr)}"
+    # First byte: IPv4 version (4) + IHL (5) = 0x45
+    assert hdr[0] == 0x45, f"Expected 0x45 (IPv4/IHL=5), got {hdr[0]:#x}"
+    # Bytes 12-15 of the IP header are the source address (10.0.42.1)
+    assert saddr == socket.inet_aton("10.0.42.1"), \
+        f"Expected src 10.0.42.1, got {saddr.hex()}"
+    # The two slices must differ — offset actually selects different bytes
+    assert hdr != saddr, "data[0:4] and data[12:4] should differ"
+    # Byte 9 of the IPv4 header is the protocol field; ICMP = 1
+    proto = fr["data[9:1]"]
+    assert isinstance(proto, bytes) and len(proto) == 1, \
+        f"Expected 1 byte for proto, got {proto!r}"
+    assert proto[0] == 1, f"Expected ICMP proto (1), got {proto[0]}"
+    # 20-byte slice at offset 8 spans TTL+proto+checksum+src+dst
+    wide = fr["data[8:20]"]
+    assert isinstance(wide, bytes) and len(wide) == 20, \
+        f"Expected 20 bytes, got {len(wide)}"
+    # proto byte at offset 1 within this slice == byte 9 overall == 1
+    assert wide[1] == 1, f"Expected ICMP proto at wide[1], got {wide[1]}"
+    # src IP at offset 4 within this slice == bytes 12-15 overall
+    assert wide[4:8] == socket.inet_aton("10.0.42.1"), \
+        f"Expected src 10.0.42.1 at wide[4:8], got {wide[4:8].hex()}"
+    found = True
+    break
+
+assert found, "No skb event with all slice fields in field_report"
+EOF
+	$retis python test.py
+}
+
+run_tests skb_fields_scalar skb_fields_string skb_fields_python_access skb_fields_no_regression skb_fields_slice

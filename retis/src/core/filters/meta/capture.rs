@@ -30,7 +30,7 @@
 
 use anyhow::{bail, ensure, Result};
 
-use super::filter::{LoadCtx, PtrHop, ResolvedField};
+use super::filter::{LoadCtx, PtrHop, ResolvedField, SliceSpec};
 use crate::core::{
     bpf_sys,
     filters::packets::{
@@ -77,7 +77,8 @@ impl FieldCaptureProgram {
         let mut offset = 0;
         for field in fields {
             slot_offsets.push(offset);
-            let value_size = Self::field_value_size(&field.load)?;
+            let value_size =
+                Self::field_value_size_with_slice(&field.load, field.slice.as_ref())?;
             offset += SLOT_HEADER_SIZE + value_size;
         }
 
@@ -103,10 +104,13 @@ impl FieldCaptureProgram {
         let mut next_field_jumps: Vec<Vec<usize>> = Vec::new();
 
         for (idx, field) in fields.iter().enumerate() {
+            let value_size =
+                Self::field_value_size_with_slice(&field.load, field.slice.as_ref())?;
             let field_jumps = Self::emit_field_capture(
                 &mut prog,
                 field,
                 slot_offsets[idx] as i16,
+                value_size,
             )?;
             next_field_jumps.push(field_jumps);
         }
@@ -156,10 +160,13 @@ impl FieldCaptureProgram {
 
         for (idx, field) in fields.iter().enumerate() {
             block_starts.push(prog.len());
+            let value_size =
+                Self::field_value_size_with_slice(&field.load, field.slice.as_ref())?;
             let fail_jumps = Self::emit_field_capture(
                 &mut prog,
                 field,
                 slot_offsets[idx] as i16,
+                value_size,
             )?;
             all_fail_jumps.push(fail_jumps);
         }
@@ -216,7 +223,20 @@ impl FieldCaptureProgram {
     /// Compute the value size in bytes for a field's slot in the section.
     /// Scalars and bitfields are always stored as 8 bytes (u64) for
     /// simplicity and alignment. Strings use their actual length.
+    /// Byte slices use the user-specified length.
     pub(crate) fn field_value_size(load: &LoadCtx) -> Result<usize> {
+        Self::field_value_size_with_slice(load, None)
+    }
+
+    /// Like `field_value_size` but also handles the slice override.
+    pub(crate) fn field_value_size_with_slice(
+        load: &LoadCtx,
+        slice: Option<&SliceSpec>,
+    ) -> Result<usize> {
+        if let Some(sl) = slice {
+            // Slice: store exactly `length` bytes.
+            return Ok(sl.length as usize);
+        }
         if load.is_arr() || (load.is_ptr() && load.is_byte()) {
             // String/char array: cap at MAX_STR_LEN.
             Ok(MAX_STR_LEN.min(load.nmemb as usize))
@@ -255,6 +275,7 @@ impl FieldCaptureProgram {
         prog: &mut eBpfProg,
         field: &ResolvedField,
         slot_offset: i16,
+        value_size: usize,
     ) -> Result<Vec<usize>> {
         let mut fail_jumps: Vec<usize> = Vec::new();
 
@@ -270,8 +291,18 @@ impl FieldCaptureProgram {
         }
 
         // Read the leaf value.
-        let value_size = Self::field_value_size(&field.load)?;
-        if field.load.is_arr() || (field.load.is_ptr() && field.load.is_byte()) {
+        if let Some(sl) = &field.slice {
+            // Byte slice: dereference the pointer field then read `length`
+            // bytes at `offset` from the pointer value.
+            Self::emit_slice_capture(
+                prog,
+                sl,
+                &field.load,
+                slot_offset,
+                value_size,
+                &mut fail_jumps,
+            )?;
+        } else if field.load.is_arr() || (field.load.is_ptr() && field.load.is_byte()) {
             Self::emit_string_capture(
                 prog,
                 &field.load,
@@ -655,6 +686,175 @@ impl FieldCaptureProgram {
         Ok(())
     }
 
+    /// Emit bytecode to capture a byte slice from a pointer field.
+    ///
+    /// R7 is the struct base (skb, or previously dereferenced pointer for
+    /// intermediate hops). `load.offt/8` is the byte offset of the pointer
+    /// field within R7's struct.
+    ///
+    /// Steps:
+    /// 1. Read the pointer value from R7 + load.offt/8 into FP-8.
+    /// 2. Load the pointer into R5; NULL-check it.
+    /// 3. Read `length` bytes from (R5 + slice.offset) directly into the
+    ///    section slot value area (R8 + slot_offset + SLOT_HEADER_SIZE).
+    ///    Writing directly to the event section avoids stack alignment issues.
+    fn emit_slice_capture(
+        prog: &mut eBpfProg,
+        sl: &SliceSpec,
+        load: &LoadCtx,
+        slot_offset: i16,
+        value_size: usize,
+        fail_jumps: &mut Vec<usize>,
+    ) -> Result<()> {
+        let ptr_byte_offset = (load.offt / 8) as i32;
+        let value_off = slot_offset + SLOT_HEADER_SIZE as i16;
+
+        // Step 1: read the pointer value from R7+ptr_byte_offset into FP-8.
+        prog.add_multi(&[
+            eBpfInsn::mov(MovInfo::Reg {
+                src: BpfReg::FP,
+                dst: BpfReg::ARG1,
+            }),
+            eBpfInsn::alu(
+                BpfAluOp::Add,
+                AluInfo::Imm {
+                    dst: BpfReg::ARG1,
+                    imm: -8,
+                },
+            ),
+            eBpfInsn::mov(MovInfo::Imm {
+                dst: BpfReg::ARG2,
+                imm: 8,
+            }),
+            eBpfInsn::mov(MovInfo::Reg {
+                src: BpfReg::R7,
+                dst: BpfReg::ARG3,
+            }),
+            eBpfInsn::alu(
+                BpfAluOp::Add,
+                AluInfo::Imm {
+                    dst: BpfReg::ARG3,
+                    imm: ptr_byte_offset,
+                },
+            ),
+            eBpfInsn::call(bpf_sys::bpf_func_id::BPF_FUNC_probe_read_kernel as u32),
+        ]);
+
+        // Check probe_read success; mark invalid on failure.
+        prog.add(eBpfInsn::jmp(
+            eBpfJmpOpExt::Bpf(BpfJmpOp::Eq),
+            JmpInfo::Imm {
+                dst: BpfReg::R0,
+                off: 2,
+                imm: 0,
+            },
+        ));
+        prog.add(eBpfInsn::st(
+            StInfo::Imm {
+                dst: BpfReg::R8,
+                off: slot_offset,
+                imm: 0,
+            },
+            BpfSize::Byte,
+        ));
+        fail_jumps.push(prog.len());
+        prog.add(eBpfInsn::jmp_a(0));
+
+        // Step 2: load pointer value from FP-8 into R5, NULL-check.
+        prog.add(eBpfInsn::ld(
+            LdInfo::Reg {
+                src: BpfReg::FP,
+                dst: BpfReg::R5,
+                off: -8,
+            },
+            BpfSize::Double,
+        ));
+        prog.add(eBpfInsn::jmp(
+            eBpfJmpOpExt::eBpf(eBpfJmpOp::Ne),
+            JmpInfo::Imm {
+                dst: BpfReg::R5,
+                off: 2,
+                imm: 0,
+            },
+        ));
+        prog.add(eBpfInsn::st(
+            StInfo::Imm {
+                dst: BpfReg::R8,
+                off: slot_offset,
+                imm: 0,
+            },
+            BpfSize::Byte,
+        ));
+        fail_jumps.push(prog.len());
+        prog.add(eBpfInsn::jmp_a(0));
+
+        // Step 3: read `value_size` bytes from (R5 + slice.offset) directly
+        // into the section slot value area. R8 points into the event ring
+        // buffer section which is treated as mem by the verifier, so this
+        // avoids all stack alignment issues.
+        prog.add_multi(&[
+            eBpfInsn::mov(MovInfo::Reg {
+                src: BpfReg::R8,
+                dst: BpfReg::ARG1,
+            }),
+            eBpfInsn::alu(
+                BpfAluOp::Add,
+                AluInfo::Imm {
+                    dst: BpfReg::ARG1,
+                    imm: value_off as i32,
+                },
+            ),
+            eBpfInsn::mov(MovInfo::Imm {
+                dst: BpfReg::ARG2,
+                imm: value_size as i32,
+            }),
+            eBpfInsn::mov(MovInfo::Reg {
+                src: BpfReg::R5,
+                dst: BpfReg::ARG3,
+            }),
+            eBpfInsn::alu(
+                BpfAluOp::Add,
+                AluInfo::Imm {
+                    dst: BpfReg::ARG3,
+                    imm: sl.offset as i32,
+                },
+            ),
+            eBpfInsn::call(bpf_sys::bpf_func_id::BPF_FUNC_probe_read_kernel as u32),
+        ]);
+
+        // Check success; mark valid on success, invalid on failure.
+        prog.add(eBpfInsn::jmp(
+            eBpfJmpOpExt::Bpf(BpfJmpOp::Eq),
+            JmpInfo::Imm {
+                dst: BpfReg::R0,
+                off: 2,
+                imm: 0,
+            },
+        ));
+        prog.add(eBpfInsn::st(
+            StInfo::Imm {
+                dst: BpfReg::R8,
+                off: slot_offset,
+                imm: 0,
+            },
+            BpfSize::Byte,
+        ));
+        fail_jumps.push(prog.len());
+        prog.add(eBpfInsn::jmp_a(0));
+
+        // Mark slot as valid.
+        prog.add(eBpfInsn::st(
+            StInfo::Imm {
+                dst: BpfReg::R8,
+                off: slot_offset,
+                imm: 1,
+            },
+            BpfSize::Byte,
+        ));
+
+        Ok(())
+    }
+
     /// Convert a byte size to a BpfSize enum.
     fn size_to_bpf(size: usize) -> Result<BpfSize> {
         match size {
@@ -921,5 +1121,49 @@ mod tests {
         let name_size = resolved[1].load.nmemb as usize;
         let expected = 1 + (2 + 8) + (2 + name_size) + (2 + 8);
         assert_eq!(capture.section_size() as usize, expected);
+    }
+
+    #[test]
+    fn capture_data_slice() {
+        let (mut skb, _net_dev, _nfct) = init_sk_buff();
+        // Point skb.data at a known buffer so we can verify the slice.
+        let payload: [u8; 16] = [
+            0x45, 0x00, 0x00, 0x28, 0xde, 0xad, 0x40, 0x00,
+            0x40, 0x06, 0x00, 0x00, 0x7f, 0x00, 0x00, 0x01,
+        ];
+        // SAFETY: we set skb.data to point at the payload array for the
+        // duration of this test. rbpf's probe_read helper does a plain
+        // memcpy so this is safe in a test context.
+        skb.data = payload.as_ptr() as *mut u8;
+
+        // Capture data[0:8]: first 8 bytes of the payload.
+        let buf = run_capture("data[0:8]", &skb);
+        assert!(read_slot_valid(&buf, 0), "slice capture should succeed");
+        // Verify the first 4 bytes match the payload.
+        let value_start = SLOT_HEADER_SIZE;
+        assert_eq!(buf[value_start], 0x45, "first byte should be 0x45 (IPv4/IHL=5)");
+        assert_eq!(buf[value_start + 1], 0x00);
+    }
+
+    #[test]
+    fn capture_slice_section_size() {
+        // data[4:16]: slot = 2 + 16 = 18; section = 1 + 18 = 19
+        let resolved = resolve_fields("data[4:16]").unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].name, "data[4:16]");
+        let capture = FieldCaptureProgram::generate(&resolved).unwrap();
+        assert_eq!(capture.section_size() as usize, 1 + 2 + 16);
+    }
+
+    #[test]
+    fn resolve_fields_slice_errors() {
+        // Slice on a scalar field must be rejected.
+        assert!(resolve_fields("len[0:4]").is_err());
+        // Zero length rejected.
+        assert!(resolve_fields("data[0:0]").is_err());
+        // Exceeds MAX_SLICE_LEN.
+        assert!(resolve_fields("data[0:65]").is_err());
+        // Malformed syntax.
+        assert!(resolve_fields("data[0]").is_err());
     }
 }

@@ -521,6 +521,70 @@ impl<'a> MetaExpr<'a> {
         })
     }
 
+    /// Build only the LoadCtx for the current field position without RHS
+    /// validation. Used by slice field resolution to bypass the string-only
+    /// restriction on pointer fields.
+    pub(crate) fn build_load_ctx(&self, field: &LhsNode) -> Result<LoadCtx> {
+        let mut ctx: XlateCtx = XlateCtx::new();
+        let mut t = self.btf_type.clone();
+        let mut type_iter = self.btf.chained_type_iter(
+            self.btf_type
+                .as_btf_type()
+                .ok_or_else(|| anyhow!("Unable to retrieve iterable BTF type"))?,
+        );
+
+        loop {
+            match t {
+                Type::Ptr(_) => {
+                    ctx.bail_on_ptr(t.name())?;
+                    ctx.load.r#type |= PTR_BIT
+                }
+                Type::Array(ref a) => {
+                    ctx.bail_on_ptr(t.name())?;
+                    ctx.load.nmemb = u8::try_from(a.len())?;
+                }
+                Type::Int(ref i) => {
+                    if i.is_signed() {
+                        ctx.load.r#type |= SIGN_BIT;
+                    }
+                    match i.size() {
+                        8 => ctx.load.r#type |= MetaType::Long as u8,
+                        4 => ctx.load.r#type |= MetaType::Int as u8,
+                        2 => ctx.load.r#type |= MetaType::Short as u8,
+                        1 => ctx.load.r#type |= MetaType::Char as u8,
+                        _ => bail!("unsupported type."),
+                    }
+                }
+                Type::Typedef(_)
+                | Type::Volatile(_)
+                | Type::Const(_)
+                | Type::Restrict(_)
+                | Type::DeclTag(_)
+                | Type::TypeTag(_) => (),
+                _ => bail!(
+                    "found unsupported type while building load ctx ({}).",
+                    t.name()
+                ),
+            }
+
+            t = match type_iter.next() {
+                Some(x) => x,
+                None => break,
+            };
+        }
+
+        if field.mask > 0 {
+            if ctx.load.is_ptr() || (ctx.load.is_num() && !ctx.load.is_signed()) {
+                ctx.load.mask = field.mask;
+            } else {
+                bail!("mask is only supported for pointers and unsigned numeric members.");
+            }
+        }
+
+        ctx.load.offt = u16::try_from(self.offt)?;
+        Ok(ctx.load)
+    }
+
     pub(crate) fn finalize_expr(
         &self,
         field: &LhsNode,
@@ -1443,6 +1507,20 @@ pub(crate) struct PtrHop {
     pub(crate) mask: u64,
 }
 
+/// Optional byte-slice parameters attached to a pointer field.
+/// Represents the `[offset:length]` suffix in e.g. `data[0:16]`.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct SliceSpec {
+    /// Byte offset from the pointer value to start reading.
+    pub(crate) offset: u32,
+    /// Number of bytes to read (capped at MAX_SLICE_LEN).
+    pub(crate) length: u32,
+}
+
+/// Maximum number of bytes a slice capture can read.
+pub(crate) const MAX_SLICE_LEN: u32 = 64;
+
 /// A resolved sk_buff field descriptor — everything needed to generate
 /// capture bytecode or interpret captured data.
 #[derive(Clone, Debug)]
@@ -1456,6 +1534,8 @@ pub(crate) struct ResolvedField {
     pub(crate) ptr_hops: Vec<PtrHop>,
     /// Bitfield size in bits (0 = not a bitfield). Copied from the BTF walk.
     pub(crate) bf_size: Option<u32>,
+    /// Optional slice spec — set when the user wrote `field[offset:length]`.
+    pub(crate) slice: Option<SliceSpec>,
 }
 
 /// Parse a comma-separated list of sk_buff field paths and resolve each
@@ -1472,6 +1552,37 @@ pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
         if field.is_empty() {
             continue;
         }
+
+        // Parse optional [offset:length] suffix before BTF resolution.
+        let (field, slice_spec) = if let Some(bracket) = field.find('[') {
+            let base = &field[..bracket];
+            let rest = &field[bracket..];
+            ensure!(
+                rest.ends_with(']'),
+                "field '{field}': malformed slice syntax, expected [offset:length]"
+            );
+            let inner = &rest[1..rest.len() - 1];
+            let (off_str, len_str) = inner.split_once(':').ok_or_else(|| {
+                anyhow!("field '{field}': slice must be [offset:length]")
+            })?;
+            let offset = off_str.trim().parse::<u32>().map_err(|_| {
+                anyhow!("field '{field}': slice offset must be a non-negative integer")
+            })?;
+            let length = len_str.trim().parse::<u32>().map_err(|_| {
+                anyhow!("field '{field}': slice length must be a non-negative integer")
+            })?;
+            ensure!(
+                length > 0,
+                "field '{field}': slice length must be > 0"
+            );
+            ensure!(
+                length <= MAX_SLICE_LEN,
+                "field '{field}': slice length {length} exceeds maximum ({MAX_SLICE_LEN})"
+            );
+            (base, Some(SliceSpec { offset, length }))
+        } else {
+            (field, None)
+        };
 
         // Auto-prepend sk_buff. if not present.
         let full_expr = if field.starts_with("sk_buff.") {
@@ -1530,21 +1641,45 @@ pub(crate) fn resolve_fields(fields_str: &str) -> Result<Vec<ResolvedField>> {
                         }
                         me.btf_type = snode;
                         me.offt = offset;
-                        // Use Rhs::Str for string/array/ptr types, Rhs::Unsigned
-                        // for numeric. finalize_expr validates the RHS type, but
-                        // for field resolution we only need the LoadCtx.
-                        let dummy_rhs = if me.is_leaf_string_type() {
-                            Rhs::Str(String::new())
+
+                        // For slice fields (field[offset:length]) bypass
+                        // finalize_expr — it always requires Rhs::Str for ptr
+                        // fields, which would reject raw pointers with nmemb==0.
+                        // Use build_load_ctx to get the LoadCtx without RHS
+                        // validation, then verify it's a pointer-to-byte field.
+                        let load_ctx = if slice_spec.is_some() {
+                            let load = me.build_load_ctx(lhs_member)?;
+                            ensure!(
+                                load.is_ptr() && load.is_byte(),
+                                "field '{field}': [offset:length] slice is only valid on \
+                                 pointer-to-byte fields (e.g. data, head)"
+                            );
+                            load
                         } else {
-                            Rhs::Unsigned(0)
+                            // Normal path: use finalize_expr.
+                            let dummy_rhs = if me.is_leaf_string_type() {
+                                Rhs::Str(String::new())
+                            } else {
+                                Rhs::Unsigned(0)
+                            };
+                            let ctx =
+                                me.finalize_expr(lhs_member, RelOp::Ne, dummy_rhs, bfs)?;
+                            ctx.load
                         };
-                        let ctx = me.finalize_expr(lhs_member, RelOp::Ne, dummy_rhs, bfs)?;
+
+                        // Build the display name including the slice suffix.
+                        let display_name = if let Some(ref sl) = slice_spec {
+                            format!("{}[{}:{}]", field, sl.offset, sl.length)
+                        } else {
+                            field.to_string()
+                        };
 
                         resolved.push(ResolvedField {
-                            name: field.to_string(),
-                            load: ctx.load,
+                            name: display_name,
+                            load: load_ctx,
                             ptr_hops,
                             bf_size: bfs,
+                            slice: slice_spec,
                         });
                     }
                     None => bail!(

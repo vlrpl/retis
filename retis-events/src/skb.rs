@@ -20,6 +20,8 @@ pub enum SkbFieldValue {
     I32 { value: i32 },
     I64 { value: i64 },
     Str { value: String },
+    /// Raw byte slice captured from a pointer field.
+    Bytes { value: Vec<u8> },
     /// The BPF read failed (e.g. NULL pointer dereference).
     Invalid { reason: String },
 }
@@ -36,6 +38,12 @@ impl fmt::Display for SkbFieldValue {
             SkbFieldValue::I32 { value } => write!(f, "{value}"),
             SkbFieldValue::I64 { value } => write!(f, "{value}"),
             SkbFieldValue::Str { value } => write!(f, "{value:?}"),
+            SkbFieldValue::Bytes { value } => {
+                for b in value {
+                    write!(f, "{b:02x}")?;
+                }
+                Ok(())
+            }
             SkbFieldValue::Invalid { .. } => write!(f, "<err>"),
         }
     }
@@ -110,6 +118,7 @@ fn field_value_to_py(py: pyo3::Python<'_>, val: &SkbFieldValue) -> pyo3::Py<pyo3
         SkbFieldValue::I32 { value } => (*value as i64).into_py_any(py).unwrap(),
         SkbFieldValue::I64 { value } => value.into_py_any(py).unwrap(),
         SkbFieldValue::Str { value } => value.into_py_any(py).unwrap(),
+        SkbFieldValue::Bytes { value } => value.as_slice().into_py_any(py).unwrap(),
         SkbFieldValue::Invalid { .. } => py.None().into_py_any(py).unwrap(),
     }
 }

@@ -9,12 +9,14 @@ enum skb_capture_type {
 } __binding;
 
 /* Maximum size of the SECTION_FIELD_REPORT payload in bytes.
- * = 1 (n_fields) + MAX_CAPTURE_FIELDS * (2 header + 32 max value)
- * = 1 + 16 * 34 = 545.
+ * = 1 (n_fields) + MAX_CAPTURE_FIELDS * (2 header + 64 max value)
+ * = 1 + 16 * 66 = 1057.
+ * 64 bytes is the maximum slice length (MAX_SLICE_LEN); string fields
+ * use at most 32 bytes, so this covers all cases.
  * Used as a compile-time constant so the BPF verifier can prove the
  * get_event_section() call is safe.
  */
-#define FIELD_REPORT_MAX_SIZE 545
+#define FIELD_REPORT_MAX_SIZE 1057
 
 /* Placeholder for field capture bytecode injection. Takes two arguments:
  * R1 = sk_buff pointer, R2 = section data pointer (past n_fields byte).
