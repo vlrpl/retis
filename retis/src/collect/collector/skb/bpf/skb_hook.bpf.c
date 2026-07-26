@@ -287,9 +287,16 @@ static __always_inline int process_skb(struct retis_context *ctx,
 
 skip_gso:
 	if (cfg->sections & BIT(SECTION_FIELD_REPORT)) {
-		void *section = get_event_section(event, COLLECTOR_SKB,
-						  SECTION_FIELD_REPORT,
-						  cfg->field_report_size);
+		void *section;
+
+		/* Allocate the maximum possible field report section so the
+		 * BPF verifier can prove the access is in bounds.  The actual
+		 * payload written is smaller; the unused tail is harmless.
+		 * Userspace uses cfg->field_report_size for the real size.
+		 */
+		section = get_event_section(event, COLLECTOR_SKB,
+					    SECTION_FIELD_REPORT,
+					    FIELD_REPORT_MAX_SIZE);
 		if (section) {
 			*(u8 *)section = cfg->n_fields;
 			capture_fields(skb, section + 1);

@@ -2,7 +2,9 @@
 
 pub type __u64 = ::std::os::raw::c_ulonglong;
 pub type u64_ = __u64;
+pub type __u16 = ::std::os::raw::c_ushort;
 pub type __u8 = ::std::os::raw::c_uchar;
+pub type u16_ = __u16;
 pub type __u32 = ::std::os::raw::c_uint;
 pub type u32_ = __u32;
 pub type u8_ = __u8;
@@ -11,11 +13,14 @@ pub const SECTION_VLAN: skb_sections = 2;
 pub const SECTION_META: skb_sections = 3;
 pub const SECTION_DATA_REF: skb_sections = 4;
 pub const SECTION_GSO: skb_sections = 5;
+pub const SECTION_FIELD_REPORT: skb_sections = 6;
 pub type skb_sections = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct skb_config {
     pub sections: u64_,
+    pub n_fields: u8_,
+    pub field_report_size: u16_,
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
