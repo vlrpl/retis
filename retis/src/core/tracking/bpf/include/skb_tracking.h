@@ -80,17 +80,31 @@ struct tracking_info *skb_tracking_info_by_skb(struct sk_buff *skb)
 	return ti;
 }
 
-static __always_inline int track_skb_start(struct retis_context *ctx)
+static __always_inline struct tracking_info *skb_tracking_info_by_stack(u64 stack_base)
+{
+	u64 *refp, ref;
+
+	refp = stack_get_skb_ref(stack_base);
+	if (!refp || !(*refp & FTRACE_WINDOW))
+		return NULL;
+
+	ref = *refp & ~FTRACE_WINDOW;
+	return skb_tracking_info(&ref);
+}
+
+static __always_inline void track_skb_start(struct retis_context *ctx,
+					    bool ftrace)
 {
 	bool inv_head = false, no_tracking = false, deferred_update = false;
 	struct tracking_info *ti = NULL, new;
 	struct tracking_config *cfg;
 	u64 head, ksym = ctx->ksym;
+	u64 new_ref, *ref = NULL;
 	struct sk_buff *skb;
 
 	skb = retis_get_sk_buff(ctx);
 	if (!skb)
-		return 0;
+		return;
 
 	/* Try to retrieve the tracking configuration for this symbol. Only
 	 * specific ones will be found while we want to track skb in all
@@ -106,7 +120,7 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 
 	head = (u64)BPF_CORE_READ(skb, head);
 	if (!head)
-		return 0;
+		return;
 
 	ti = bpf_map_lookup_elem(&tracking_map, &head);
 
@@ -136,13 +150,13 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 		 * there.
 		 */
 		if (ctx->probe_type == KERNEL_PROBE_KRETPROBE)
-			return 0;
+			return;
 
 		/* Tracking info doesn't exist and we don't want to add one,
 		 * nothing more we can do here.
 		 */
 		if (no_tracking)
-			return 0;
+			return;
 
 		ti = &new;
 		ti->timestamp = ctx->timestamp;
@@ -164,12 +178,6 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 	if (ti->stack_ref != ctx->stack_base)
 		ti->stack_ref = ctx->stack_base;
 
-	if (!track_stack_update(ctx->stack_base,
-			       inv_head
-			       ? (u64)skb
-			       : (u64)head))
-		log_error("While tracking stack. Unable to update the entry");
-
 	if (deferred_update)
 		bpf_map_update_elem(&tracking_map, &head, ti, BPF_NOEXIST);
 
@@ -179,31 +187,50 @@ static __always_inline int track_skb_start(struct retis_context *ctx)
 	if (inv_head)
 		bpf_map_update_elem(&tracking_map, (u64 *)&skb, ti, BPF_NOEXIST);
 
-	return 0;
+	/* Get the existing stack ref before updating, and compute the new ref
+	 * value. Tag it as part of an ftrace window if we are already inside
+	 * one, or if the probe itself opened one (kprobe with ftrace option
+	 * set). Warn if a nested window is detected.
+	 */
+	ref = stack_get_skb_ref(ctx->stack_base);
+	new_ref = inv_head ? (u64)skb : (u64)head;
+
+	if (ftrace && ctx->probe_type == KERNEL_PROBE_KPROBE &&
+	    (ctx->flags & RETIS_F_WINDOW_PASS))
+		log_warning("Nested ftrace window detected: events may be dropped");
+
+	if ((ftrace && ctx->probe_type == KERNEL_PROBE_KPROBE) ||
+	    (ctx->flags & RETIS_F_WINDOW_PASS))
+		new_ref |= FTRACE_WINDOW;
+
+	if ((!ref || *ref != new_ref) &&
+	    track_stack_update(ctx->stack_base, new_ref))
+		log_error("While tracking stack. Unable to update the entry");
 }
 
-static __always_inline int track_skb_end(struct retis_context *ctx)
+static __always_inline int track_skb_end(struct retis_context *ctx, bool ftrace)
 {
 	struct tracking_config *cfg;
 	u64 head, ksym = ctx->ksym;
 	struct tracking_info *ti;
 	struct sk_buff *skb;
+	u64 *ref;
 
 	cfg = bpf_map_lookup_elem(&tracking_config_map, &ksym);
 	if (!cfg)
-		return 0;
+		goto clear_ftrace;
 
 	/* We only supports free functions below */
 	if (!cfg->free)
-		return 0;
+		goto clear_ftrace;
 
 	skb = retis_get_sk_buff(ctx);
 	if (!skb)
-		return 0;
+		goto clear_ftrace;
 
 	head = (u64)BPF_CORE_READ(skb, head);
 	if (!head)
-		return 0;
+		goto clear_ftrace;
 
 	if (cfg->partial_free) {
 		/* See kfree_skb_partial */
@@ -213,7 +240,7 @@ static __always_inline int track_skb_end(struct retis_context *ctx)
 		 * later and we'll catch it.
 		 */
 		if (!stolen)
-			return 0;
+			goto clear_ftrace;
 	}
 
 	ti = bpf_map_lookup_elem(&tracking_map, &head);
@@ -227,6 +254,17 @@ static __always_inline int track_skb_end(struct retis_context *ctx)
 
 	/* Skb is freed, remove it from our tracking list. */
 	bpf_map_delete_elem(&tracking_map, &head);
+
+clear_ftrace:
+	/* Close the ftrace window by stripping the ftrace tag bits so that
+	 * potentially subsequent consumers that rely on stack tracking are
+	 * not affected.
+	 */
+	if (ftrace && ctx->probe_type == KERNEL_PROBE_KRETPROBE) {
+		ref = stack_get_skb_ref(ctx->stack_base);
+		if (ref && (*ref & FTRACE_WINDOW))
+			*ref &= ~FTRACE_WINDOW;
+	}
 
 	return 0;
 }

@@ -5,8 +5,6 @@
 #include <common.h>
 #include <if_vlan.h>
 
-#define BIT(x) (1 << (x))
-
 #define ETH_P_IP	0x0800
 #define ETH_P_ARP	0x0806
 #define ETH_P_IPV6	0x86dd
@@ -285,7 +283,7 @@ skip_gso:
 	return 0;
 }
 
-DEFINE_HOOK(F_AND, RETIS_ALL_FILTERS,
+DEFINE_HOOK(F_GROUPS(RETIS_ALL_FILTERS),
 	struct sk_buff *skb;
 
 	skb = retis_get_sk_buff(ctx);

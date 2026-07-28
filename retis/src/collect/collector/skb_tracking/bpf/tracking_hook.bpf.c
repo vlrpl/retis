@@ -10,16 +10,17 @@ struct skb_tracking_event {
 	u64 skb;
 } __binding;
 
-DEFINE_HOOK(F_AND, RETIS_ALL_FILTERS,
+DEFINE_HOOK(F_GROUPS(RETIS_ALL_FILTERS, RETIS_F_WINDOW_PASS),
 	struct skb_tracking_event *e;
 	struct tracking_info *ti;
 	struct sk_buff *skb;
 
 	skb = retis_get_sk_buff(ctx);
-	if (!skb)
-		return 0;
+	if (skb)
+		ti = skb_tracking_info_by_skb(skb);
+	else
+		ti = skb_tracking_info_by_stack(ctx->stack_base);
 
-	ti = skb_tracking_info_by_skb(skb);
 	if (!ti)
 		return 0;
 

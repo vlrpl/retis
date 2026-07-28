@@ -84,6 +84,22 @@ struct retis_context {
 	u32 flags;
 };
 
+/* Defines the bit position for each filter */
+enum {
+	RETIS_F_PACKET_PASS_SH = 0,
+	RETIS_F_META_PASS_SH   = 1,
+	RETIS_F_WINDOW_PASS_SH = 2,
+};
+
+/* Defines the bitmask for each filter */
+enum {
+	RETIS_F_PACKET_PASS = BIT(RETIS_F_PACKET_PASS_SH),
+	RETIS_F_META_PASS   = BIT(RETIS_F_META_PASS_SH),
+	RETIS_F_WINDOW_PASS = BIT(RETIS_F_WINDOW_PASS_SH),
+};
+
+#define RETIS_ALL_FILTERS	(RETIS_F_PACKET_PASS | RETIS_F_META_PASS)
+
 /* Helper to retrieve a function parameter argument using the common context */
 #define retis_get_param(ctx, offset, type)			\
 	(type)(((offset) >= 0 && (offset) <= EXT_REG_MAX &&	\
