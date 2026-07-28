@@ -56,13 +56,12 @@ ifeq ($(VERBOSITY),)
     MAKE += -s
     CARGO += -q
 define out_console
-    $(PRINT) '%-12s %s\n' "[$(1)]" "$(2)"
+    $(PRINT) '%-12s %s\n' "[$(1)]" "$(2)";
 endef
 
 .SILENT:
 else
 define out_console
-    :
 endef
 endif
 
@@ -104,7 +103,7 @@ BINDINGS := $(shell find $(ROOT_DIR)/retis/src -name '*.[ch]' -not -name 'vmlinu
 gen-bindings: clean-bindings ebpf-prereqs
 	-mkdir -p $(ROOT_DIR)/retis/src/bindings; \
 	for binding in $(BINDINGS); do \
-	    $(call out_console,BINDINGS,processing $$binding ...); \
+	    $(call out_console,BINDINGS,processing $$binding ...) \
 	    annotations="`$(ROOT_DIR)/tools/annotations.py "$$binding" "uapi" $(INCLUDES) $(BPF_CFLAGS)`"; \
 	    opts=; \
 	    for a in $$annotations; do opts="--allowlist-item $$a $$opts"; done; \
@@ -118,7 +117,7 @@ gen-bindings: clean-bindings ebpf-prereqs
 	               $$opts \
 	               -o $$out_path \
 	               -- -D__BINDGEN__ $(INCLUDES) $(BPF_CFLAGS); \
-	    $(call out_console,BINDINGS,generated bindings in "$$out_path" ...); \
+	    $(call out_console,BINDINGS,generated bindings in "$$out_path" ...) \
 	done
 
 define build
