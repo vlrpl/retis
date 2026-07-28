@@ -569,6 +569,7 @@ impl Collectors {
                             Some(s) => Some(rotation_policy_from_str(s)?),
                             None => None,
                         },
+                        collect.out_rotate_count,
                         &main_config.cmdline,
                         self.monotonic_offset,
                     )

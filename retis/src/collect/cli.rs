@@ -96,15 +96,27 @@ Examples of meta filters:
     )]
     pub(super) out: Option<PathBuf>,
     #[arg(
+        short = 'r',
         long,
         requires = "out",
         value_name = "LIMIT",
-        help = "Rotate the output file (see `--out`) once a given limit is reached. The rotation limit can be:
-- A size: <LIMIT> is in bytes and must be suffixed with a size unit (MB, GB). The file names will be <OUT>.X, with X being a number starting at 0 and increasing over time. e.g. '--out-rotate 64MB'.
+        help = "Rotate the output file (see `--out`) once a given limit is reached. The file names will be <OUT>.X, with X being a number starting at 0 and increasing over time.
+
+The rotation limit can be:
+- A size: <LIMIT> is in bytes and must be suffixed with a size unit (MB, GB). e.g. '--out-rotate 64MB'.
 
 Events from the same series might end up on different files. If a previous collection with rotation enabled was not removed only the files required to store the new collection will be overridden. This includes the '--out' value."
     )]
     pub(super) out_rotate: Option<String>,
+    #[arg(
+        short = 'R',
+        long,
+        requires = "out_rotate",
+        value_name = "COUNT",
+        value_parser = clap::value_parser!(u32).range(1..),
+        help = "When rotating the output file (see `--out-rotate`) limit the number of output files created to <COUNT>."
+    )]
+    pub(super) out_rotate_count: Option<u32>,
     #[arg(long, help = "Write the events to stdout even if --out is used.")]
     pub(super) print: bool,
     #[arg(

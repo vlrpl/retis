@@ -26,20 +26,20 @@ rotation_by_size() {
 
 	# Check reading rotated events.
 
-	out=$($retis print)
-	echo $out | grep "file id 0"
-	echo $out | grep "file id 1"
-	echo $out | grep "file id 2"
+	$retis print > print
+	grep "file id 0" print
+	grep "file id 1" print
+	grep "file id 2" print
 
-	out=$($retis print retis.data.1)
-	echo $out | grep -v "file id 0"
-	echo $out | grep "file id 1"
-	echo $out | grep -v "file id 2"
+	$retis print retis.data.1 > print
+	grep -v "file id 0" print
+	grep "file id 1" print
+	grep -v "file id 2" print
 
-	out=$($retis print retis.data.1..)
-	echo $out | grep -v "file id 0"
-	echo $out | grep "file id 1"
-	echo $out | grep "file id 2"
+	$retis print retis.data.1.. > print
+	grep -v "file id 0" print
+	grep "file id 1" print
+	grep "file id 2" print
 
 	# Check stats contain all 3 rotation blocks
 	$retis stats > stats
@@ -70,21 +70,68 @@ for e in reader.events():
 	print(e)
 EOF
 
-		out=$($retis python test.py)
-		echo $out | grep "file id 0"
-		echo $out | grep "file id 1"
-		echo $out | grep "file id 2"
+		$retis python test.py > python
+		grep "file id 0" python
+		grep "file id 1" python
+		grep "file id 2" python
 
-		out=$($retis python --input retis.data.1 test.py)
-		echo $out | grep -v "file id 0"
-		echo $out | grep "file id 1"
-		echo $out | grep -v "file id 2"
+		$retis python --input retis.data.1 test.py > python
+		grep -v "file id 0" python
+		grep "file id 1" python
+		grep -v "file id 2" python
 
-		out=$($retis python --input retis.data.1.. test.py)
-		echo $out | grep -v "file id 0"
-		echo $out | grep "file id 1"
-		echo $out | grep "file id 2"
+		$retis python --input retis.data.1.. test.py > python
+		grep -v "file id 0" python
+		grep "file id 1" python
+		grep "file id 2" python
 	fi
 }
 
-run_tests rotation_by_size
+rotation_files_count() {
+	two_ns
+
+	#############
+	# Limit = 1 #
+	#############
+
+	ip netns exec ns1 socat TCP-LISTEN:80 /dev/null &
+	socat_pid=$!
+	$retis collect -o --out-rotate 1MB --out-rotate-count 1 \
+		--stop-after 8000 \
+		-f "host 10.0.42.1" \
+		--cmd "ip netns exec ns0 socat /dev/zero TCP:10.0.42.2:80"
+
+	# Rotation file names should be used.
+	[ ! -f retis.data ]
+
+	# Check the limit was respected.
+	count=$(ls retis.data.* | wc -l)
+	[ $count == "1" ]
+
+	# We can also check we have the expected output.
+	[ -f retis.data.0 ]
+
+	#############
+	# Limit = 2 #
+	#############
+
+	ip netns exec ns1 kill $socat_pid || true
+	ip netns exec ns1 socat TCP-LISTEN:80 /dev/null &
+	$retis collect -o --out-rotate 1MB --out-rotate-count 2 \
+		--stop-after 8000 \
+		-f "host 10.0.42.1" \
+		--cmd "ip netns exec ns0 socat /dev/zero TCP:10.0.42.2:80"
+
+	# Rotation file names should be used.
+	[ ! -f retis.data ]
+
+	# Check the limit was respected.
+	count=$(ls retis.data.* | wc -l)
+	[ $count == "2" ]
+
+	# We can also check we have the expected output.
+	[ -f retis.data.0 ]
+	[ -f retis.data.1 ]
+}
+
+run_tests rotation_by_size rotation_files_count
