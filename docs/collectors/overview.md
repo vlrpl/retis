@@ -124,15 +124,17 @@ The `nft` collector produces the [nft](../events/nft.md) event section.
 
 ## Network device
 
-The `dev` collector provides information about network devices, either if a
-`struct net_device` is available as part of a probe arguments or through a
-`struct sk_buff` and its reference.
+The `dev` collector provides information about network devices, using the
+reference inside `struct sk_buff` or directly operating on `struct net_device`
+if no `skb` is available in a probed function and in an `ftrace` section.
 
 The `dev` collector produces the [dev](../events/dev.md) event section.
 
 ## Namespace
 
-The `ns` collector retrieves information about namespaces, currently only
-network namespaces.
+The `ns` collector retrieves information about network namespaces, using the
+reference inside `struct sk_buff` (through `struct net_device` or `struct sock`)
+or directly operating on `struct net` if no `skb` is available in a probed
+function and in an `ftrace` section.
 
 The `ns` collector produces the [netns](../events/netns.md) event section.
