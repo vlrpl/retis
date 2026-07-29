@@ -344,8 +344,20 @@ static __always_inline int chain(struct retis_context *ctx)
 		log_warning("ctx extension failed: %d", ret);
 
 	skb = retis_get_sk_buff(ctx);
-	if (skb)
+	if (skb) {
 		ctx->flags = filter(skb);
+
+		if (!RETIS_TRACKABLE(ctx)) {
+			/* Terminate any potentially existing entry not
+			 * associated with a tracked skb. Blind termination
+			 * approach is supposed to be more performing in the
+			 * worst case and will lead to a simple lookup failure
+			 * in most cases. This acts as packet path garbage
+			 * collection (e.g. skb_tracking stale entry hanging).
+			 */
+			track_stack_end(ctx->stack_base);
+		}
+	}
 
 	if (stack_in_window(ctx->stack_base))
 		ctx->flags |= RETIS_F_WINDOW_PASS;
@@ -357,18 +369,8 @@ static __always_inline int chain(struct retis_context *ctx)
 	 * logic runs even if later ops fail: we don't want to miss information
 	 * because of non-fatal errors!
 	 */
-	if (RETIS_TRACKABLE(ctx)) {
+	if (RETIS_TRACKABLE(ctx))
 		track_skb_start(ctx, cfg->ftrace);
-	} else if (skb) {
-		/* Terminate any potentially existing entry not
-		 * associated with a tracked skb. Blind termination
-		 * approach is supposed to be more performing in the
-		 * worst case and will lead to a simple lookup failure
-		 * in most cases. This acts as packet path garbage
-		 * collection (e.g. skb_tracking stale entry hanging).
-		 */
-		track_stack_end(ctx->stack_base);
-	}
 
 	/* Shortcut when there are no hooks (e.g. tracking-only probe); no need
 	 * to allocate and fill an event to drop it later on.
