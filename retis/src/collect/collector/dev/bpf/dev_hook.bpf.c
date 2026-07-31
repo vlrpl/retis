@@ -12,7 +12,7 @@ struct dev_event {
 	u32 iif;
 } __binding;
 
-DEFINE_HOOK_RAW(
+DEFINE_HOOK(F_GROUPS(RETIS_ALL_FILTERS, RETIS_F_WINDOW_PASS),
 	struct sk_buff *skb;
 	struct net_device *dev;
 	struct dev_event *e;
@@ -22,15 +22,7 @@ DEFINE_HOOK_RAW(
 	 * data linked to packets.
 	 */
 	skb = retis_get_sk_buff(ctx);
-	if (skb) {
-		if (!skb_is_tracked(skb))
-			return 0;
-
-		dev = BPF_CORE_READ(skb, dev);
-	} else {
-		dev = retis_get_net_device(ctx);
-	}
-
+	dev = skb ? BPF_CORE_READ(skb, dev) : retis_get_net_device(ctx);
 	if (!dev)
 		return 0;
 
