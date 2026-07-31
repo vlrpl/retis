@@ -49,7 +49,10 @@ fn item_get_props(item: &Item) -> EventTypeProps {
                 .variants
                 .iter()
                 .all(|v| matches!(v.fields, Fields::Named(_)));
-            enum_is_simple = item.variants.iter().all(|v| v.fields == Fields::Unit);
+            enum_is_simple = item
+                .variants
+                .iter()
+                .all(|v| matches!(v.fields, Fields::Unit));
             item.ident.clone()
         }
         _ => panic!("event types must be enums or structs"),
