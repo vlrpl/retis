@@ -95,7 +95,7 @@ The `ct` collector reports information collected from socket buffers
 `_nfct` field of an `skb`.
 
 The reported information in the events contains conntrack status and protocol
-specific data. Currently supported protocols are IPv4/6, TCP, UDP and ICMP.
+specific data. Currently supported protocols are IPv4/6, TCP, UDP, ICMP and SCTP.
 
 The `ct` collector produces the [ct](../events/ct.md) event section.
 

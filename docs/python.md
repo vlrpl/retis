@@ -141,7 +141,7 @@ print("Average events per series: {}".format(statistics.mean(events_per_series))
 
 The packet itself is stored as raw data in the Retis events and as such
 individual packet fields cannot be directly accessed. A third party library is
-required, such as (Scapy)[https://scapy.readthedocs.io/].
+required, such as [Scapy](https://scapy.readthedocs.io/).
 
 To ease packet consumption a helper is available to convert raw packets to a
 Scapy `Ether` representation. The helper only works if Scapy is available on the
@@ -231,7 +231,7 @@ True
 False
 ```
 
-With the `packet` sub-section in the `skb` section:
+With the `packet` event section:
 
 ```text
 >>> event.packet.to_scapy()
