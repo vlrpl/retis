@@ -27,7 +27,7 @@ output the events to the console.
 
 ```none
 $ retis collect
-Collector(s) started: skb-tracking, skb, skb-drop, ovs, nft, ct
+Collector(s) started: skb-tracking, skb, dev, skb-drop, ovs, nft, ct, ns
 No probe(s) given: using tp:net:netif_receive_skb, tp:net:net_dev_start_xmit
 7 probe(s) loaded
 ...
