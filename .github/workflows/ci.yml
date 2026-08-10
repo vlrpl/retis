@@ -9,7 +9,7 @@ jobs:
     container:
       image: rust:bookworm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -64,7 +64,7 @@ jobs:
     container:
       image: rust:bookworm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/rust-setup
         with:
@@ -87,7 +87,7 @@ jobs:
     container:
       image: rust:bookworm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/rust-setup
         with:
@@ -110,7 +110,7 @@ jobs:
     container:
       image: python:3.11-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Lint and format check
         run: |
@@ -121,7 +121,7 @@ jobs:
   build-python-lib:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: PyO3/maturin-action@v1
         with:
@@ -142,7 +142,7 @@ jobs:
     container:
       image: python:${{ matrix.python-version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install curl
         run: |
@@ -168,7 +168,7 @@ jobs:
     container:
       image: fedora:41
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: dnf install -y gcc make pkg-config wireshark-cli wireshark-devel json-c-devel

@@ -21,7 +21,7 @@ jobs:
           sudo apt-get install -y qemu-user-static
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set environment
         run: |
@@ -49,7 +49,7 @@ jobs:
 
       - name: Build container image
         id: build_image
-        uses: redhat-actions/buildah-build@v2
+        uses: redhat-actions/buildah-build@v3
         with:
           containerfiles: ./Containerfile
           image: retis
@@ -58,7 +58,7 @@ jobs:
 
       - name: Push container image
         id: push_image
-        uses: redhat-actions/push-to-registry@v2
+        uses: redhat-actions/push-to-registry@v3
         with:
           image: ${{ steps.build_image.outputs.image }}
           tags: ${{ steps.build_image.outputs.tags }}
