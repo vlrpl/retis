@@ -26,6 +26,7 @@ DEFINE_HOOK(F_GROUPS(RETIS_ALL_FILTERS, RETIS_F_WINDOW_PASS),
 	if (!dev)
 		return 0;
 
+
 	ifindex = BPF_CORE_READ(dev, ifindex);
 	if (!ifindex)
 		return 0;
