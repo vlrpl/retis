@@ -40,17 +40,17 @@ sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
 sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
 SCRIPT
 
-# Grow disk on rhel-like distros.
-def grow_vm_disk(centos)
-  centos.vm.provider "libvirt" do |libvirt|
+# Grow the root filesystem after resizing the libvirt disk.
+def grow_vm_disk(vm, install_command)
+  vm.vm.provider "libvirt" do |libvirt|
     libvirt.machine_virtual_size = 20
   end
 
-  centos.vm.provision "shell" do |s|
+  vm.vm.provision "shell" do |s|
     s.inline = <<-SHELL
       # Make it fail early in case of errors.
       set -euxo pipefail
-      dnf install -y cloud-utils-growpart util-linux
+      #{install_command}
       root_device=$(findmnt -n --nofsroot -o SOURCE /)
       root_disk=$(lsblk -no PKNAME "$root_device")
       # Mimic `lsblk --output PARTN`, which is unavailable in c9s' and
@@ -91,7 +91,7 @@ Vagrant.configure("2") do |config|
     fedora.vm.box = "fedora-44-cloud"
     fedora.vm.box_url = get_box("https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/", /.*vagrant\.libvirt\.box$/)
 
-    grow_vm_disk(fedora)
+    grow_vm_disk(fedora, "dnf install -y cloud-utils-growpart util-linux")
 
     fedora.vm.provision "rhel-common", type: "shell", inline: $bootstrap_rhel_common
     fedora.vm.provision "common", type: "shell", inline: $bootstrap_common
@@ -106,7 +106,7 @@ Vagrant.configure("2") do |config|
     rawhide.vm.box = "fedora-rawhide-cloud"
     rawhide.vm.box_url = get_box("https://download.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/", /.*vagrant\.libvirt\.box$/)
 
-    grow_vm_disk(rawhide)
+    grow_vm_disk(rawhide, "dnf install -y cloud-utils-growpart util-linux")
 
     rawhide.vm.provision "rhel-common", type: "shell", inline: $bootstrap_rhel_common
     rawhide.vm.provision "common", type: "shell", inline: $bootstrap_common
@@ -128,7 +128,7 @@ Vagrant.configure("2") do |config|
        alternatives --set python3 /usr/bin/python3.9
     SHELL
 
-    grow_vm_disk(centos)
+    grow_vm_disk(centos, "dnf install -y cloud-utils-growpart util-linux")
 
     centos.vm.provision "rhel-common", type: "shell", inline: $bootstrap_rhel_common
     centos.vm.provision "common", type: "shell", inline: $bootstrap_common
@@ -145,7 +145,7 @@ Vagrant.configure("2") do |config|
     centos.vm.box = "centos-9-stream"
     centos.vm.box_url = get_box("https://cloud.centos.org/centos/9-stream/x86_64/images/", /.*latest\.x86_64\.vagrant-libvirt\.box$/)
 
-    grow_vm_disk(centos)
+    grow_vm_disk(centos, "dnf install -y cloud-utils-growpart util-linux")
 
     # The CRB repository is needed for libpcap-devel.
     centos.vm.provision "shell", inline: <<-SHELL
@@ -165,7 +165,7 @@ Vagrant.configure("2") do |config|
     centos.vm.box = "centos-10-stream"
     centos.vm.box_url = get_box("https://cloud.centos.org/centos/10-stream/x86_64/images/", /.*latest\.x86_64\.vagrant-libvirt\.box$/)
 
-    grow_vm_disk(centos)
+    grow_vm_disk(centos, "dnf install -y cloud-utils-growpart util-linux")
 
     # The CRB repository is needed for libpcap-devel.
     centos.vm.provision "shell", inline: <<-SHELL
@@ -182,7 +182,8 @@ Vagrant.configure("2") do |config|
   end
 
   config.vm.define "x86_64-jammy" do |jammy|
-    jammy.vm.box = "generic/ubuntu2204"
+    jammy.vm.box = "ubuntu-jammy-libvirt"
+    grow_vm_disk(jammy, "apt-get update -y && apt-get install -y cloud-guest-utils util-linux")
 
     jammy.vm.provision "shell", inline: <<-SHELL
       set -euxo pipefail
