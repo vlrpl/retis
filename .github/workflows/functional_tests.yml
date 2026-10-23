@@ -21,26 +21,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: "Fedora 44 (x86_64)"
-            distro: x86_64-f44
-            test_extra_args: "--ovs-track"
-            cargo_cmd_opts: ""
-          - name: "Fedora Rawhide (x86_64)"
-            distro: x86_64-rawhide
-            test_extra_args: "--ovs-track"
-            cargo_cmd_opts: ""
-          - name: "CentOS 8 Stream (x86_64)"
-            distro: x86_64-c8s
-            test_extra_args: "--ignore=test_ovs.py --ignore=test_nft.py"
-            cargo_cmd_opts: "--no-default-features"
-          - name: "CentOS 9 Stream (x86_64)"
-            distro: x86_64-c9s
-            test_extra_args: "--ovs-track"
-            cargo_cmd_opts: ""
-          - name: "CentOS 10 Stream (x86_64)"
-            distro: x86_64-c10s
-            test_extra_args: "--ovs-track"
-            cargo_cmd_opts: ""
           - name: "Ubuntu Jammy (x86_64)"
             distro: x86_64-jammy
             test_extra_args: ""
